@@ -1,3 +1,4 @@
+// 상태바(한 줄 표시), ㄱ 키 회전, 기권 버튼(RESIGN) 추가를 위해 확장된 버전
 package game;
 
 import javax.swing.*;
@@ -7,21 +8,15 @@ import java.awt.event.ActionEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
-import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.*;
 import java.util.List;
-import java.util.Map;
 
-/**
- * [수정됨] 실제 블로커스 게임이 이루어지는 JPanel.
- * 채팅(좌), 보드(중), 인벤토리(하), 정보/조작(상)
- */
 public class GameScreen extends JPanel {
     private BlokusClient client;
 
     private static final int BOARD_SIZE = 20;
     private static final int CELL_SIZE = 25;
-    private static final int BOARD_PANEL_SIZE = BOARD_SIZE * CELL_SIZE; // 500x500
+    private static final int BOARD_PANEL_SIZE = BOARD_SIZE * CELL_SIZE;
 
     private int[][] board = new int[BOARD_SIZE][BOARD_SIZE];
     private List<BlokusPiece> myHand = new ArrayList<>();
@@ -44,11 +39,11 @@ public class GameScreen extends JPanel {
 
     private JLabel turnLabel;
     private JButton toggleColorButton;
+    private JButton resignButton;
 
     private ColorIndicatorPanel currentTurnIndicator;
     private JPanel myColorsPanel;
 
-    // 타이머 레이블
     private JLabel[] timerLabels = new JLabel[4];
 
     private JTextArea chatArea;
@@ -59,10 +54,8 @@ public class GameScreen extends JPanel {
         setLayout(new BorderLayout(10, 10));
         setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
-        // 1. 상단 패널 (정보 + 조작 버튼)
         JPanel topPanel = new JPanel(new BorderLayout(10, 5));
 
-        // 1-1. 정보 (턴, 내 색상, 타이머)
         JPanel infoPanel = new JPanel(new BorderLayout(10, 5));
 
         JPanel turnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
@@ -78,35 +71,53 @@ public class GameScreen extends JPanel {
         myColorsPanel.add(new JLabel("내 색상: "));
         infoPanel.add(myColorsPanel, BorderLayout.CENTER);
 
-        // 타이머 패널
         JPanel timerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
-        for(int i=0; i<4; i++) {
+        for (int i = 0; i < 4; i++) {
             timerLabels[i] = new JLabel("5:00");
             timerLabels[i].setFont(new Font("맑은 고딕", Font.BOLD, 12));
-            timerLabels[i].setForeground(getColorForPlayer(i+1));
+            timerLabels[i].setForeground(getColorForPlayer(i + 1));
             timerPanel.add(timerLabels[i]);
         }
         infoPanel.add(timerPanel, BorderLayout.SOUTH);
 
         topPanel.add(infoPanel, BorderLayout.CENTER);
 
-        // 1-2. 조작 버튼 (회전, 턴 넘기기)
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        JButton rotateButton = new JButton("회전");
+        JButton rotateButton = new JButton("회전 (r/ㄱ)");
         rotateButton.addActionListener(e -> rotateSelectedPiece());
         JButton passButton = new JButton("턴 넘기기");
         passButton.addActionListener(e -> {
             client.sendMessage(Protocol.C2S_PASS_TURN);
             deselectPiece();
         });
+        resignButton = new JButton("기권");
+        resignButton.addActionListener(e -> {
+            int c = JOptionPane.showConfirmDialog(this,
+                    "정말 기권하시겠습니까? 점수 확정 후 더 이상 관여할 수 없습니다.",
+                    "기권 확인",
+                    JOptionPane.YES_NO_OPTION);
+            if (c == JOptionPane.YES_OPTION) {
+                client.sendMessage(ProtocolExt.C2S_RESIGN);
+                Object[] opts = {"관전하기", "로비로"};
+                int sel = JOptionPane.showOptionDialog(this, "관전을 계속하시겠습니까?",
+                        "관전 선택", JOptionPane.DEFAULT_OPTION,
+                        JOptionPane.QUESTION_MESSAGE, null, opts, opts[0]);
+                if (sel == 1) {
+                    // 로비 이동은 서버 SYSTEM_MSG 로직 재활용
+                    client.sendMessage(Protocol.C2S_LEAVE_ROOM); // 게임 중이라 실패할 수 있음 -> 서버 기권 후 로비 이동 구현 필요(간단 예시)
+                } else {
+                    client.sendMessage(ProtocolExt.C2S_SPECTATE + ":" + ""); // roomId 필요시 확장
+                }
+            }
+        });
 
         controlPanel.add(rotateButton);
         controlPanel.add(passButton);
+        controlPanel.add(resignButton);
         topPanel.add(controlPanel, BorderLayout.EAST);
 
         add(topPanel, BorderLayout.NORTH);
 
-        // 2. 게임 보드 패널 (중앙)
         boardPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -121,24 +132,20 @@ public class GameScreen extends JPanel {
         addMouseListeners();
         add(boardPanel, BorderLayout.CENTER);
 
-        // 3. 하단 패널 (인벤토리 + 토글 버튼)
         JPanel southPanel = new JPanel(new BorderLayout(5, 5));
-
         toggleColorButton = new JButton("내 블록 색상 전환");
         toggleColorButton.setVisible(false);
         toggleColorButton.addActionListener(e -> toggleInventoryColor());
         southPanel.add(toggleColorButton, BorderLayout.NORTH);
 
-        // [수정됨] WrapLayout 사용
         handPanel = new JPanel(new WrapLayout(WrapLayout.LEFT, 5, 5));
         handPanel.setBackground(Color.WHITE);
         handScrollPane = new JScrollPane(handPanel);
-        handScrollPane.setPreferredSize(new Dimension(800, 160)); // 2~3줄 높이
+        handScrollPane.setPreferredSize(new Dimension(800, 160));
 
         southPanel.add(handScrollPane, BorderLayout.CENTER);
         add(southPanel, BorderLayout.SOUTH);
 
-        // 4. 채팅 패널 (좌측)
         JPanel chatPanel = new JPanel(new BorderLayout());
         chatArea = new JTextArea();
         chatArea.setEditable(false);
@@ -157,22 +164,21 @@ public class GameScreen extends JPanel {
         chatPanel.setPreferredSize(new Dimension(250, 0));
         add(chatPanel, BorderLayout.WEST);
 
-        // 'R' 키보드 바인딩 설정
         setupKeyBindings();
     }
 
-    // 'R' 키 바인딩
     private void setupKeyBindings() {
         InputMap im = this.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         ActionMap am = this.getActionMap();
 
         im.put(KeyStroke.getKeyStroke('r'), "rotateAction");
         im.put(KeyStroke.getKeyStroke('R'), "rotateAction");
+        // 한글 'ㄱ' (유니코드: U+3131)
+        im.put(KeyStroke.getKeyStroke('ㄱ'), "rotateAction");
 
         am.put("rotateAction", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                // 채팅창에 포커스가 없을 때만 회전
                 if (!chatField.isFocusOwner()) {
                     rotateSelectedPiece();
                 }
@@ -180,7 +186,6 @@ public class GameScreen extends JPanel {
         });
     }
 
-    // S2C_GAME_START:<playerCount>:<yourColor(s)>
     public void initializeGame(String data) {
         String[] parts = data.split(":");
         String[] colorsStr = parts[1].split(",");
@@ -188,7 +193,7 @@ public class GameScreen extends JPanel {
         myColors = new int[colorsStr.length];
         myColorsPanel.removeAll();
         myColorsPanel.add(new JLabel("내 색상: "));
-        for (int i=0; i < colorsStr.length; i++) {
+        for (int i = 0; i < colorsStr.length; i++) {
             myColors[i] = Integer.parseInt(colorsStr[i]);
             myColorsPanel.add(new ColorIndicatorPanel(getColorForPlayer(myColors[i])));
         }
@@ -204,12 +209,11 @@ public class GameScreen extends JPanel {
         handPanel.removeAll();
         deselectPiece();
 
-        for (int i=0; i<4; i++) {
+        for (int i = 0; i < 4; i++) {
             timerLabels[i].setText(formatTime(300));
         }
     }
 
-    // S2C_GAME_STATE:<board_data>:<currentPlayerName (Color 턴)>:<colorId>
     public void updateGameState(String data) {
         if (data == null) return;
         String[] parts = data.split(":");
@@ -249,19 +253,19 @@ public class GameScreen extends JPanel {
         if (inventoryFilterChanged) {
             updateHandPanelUI();
         } else if (oldTurnColor != newTurnColor) {
-            handPanel.repaint(); // 턴만 바뀐 경우 (활성/비활성)
+            handPanel.repaint();
         }
 
         boardPanel.repaint();
     }
 
-    // S2C_HAND_UPDATE:<pieceId1/color1>,<pieceId2/color2>...
     public void updatePlayerHand(String data) {
         myHand.clear();
         if (data != null && !data.isEmpty()) {
             String[] pieces = data.split(",");
             for (String p : pieces) {
                 String[] pieceData = p.split("/");
+                if (pieceData.length != 2) continue;
                 String id = pieceData[0];
                 int color = Integer.parseInt(pieceData[1]);
                 myHand.add(new BlokusPiece(id, color));
@@ -270,24 +274,37 @@ public class GameScreen extends JPanel {
         updateHandPanelUI();
     }
 
-    // S2C_TIME_UPDATE:<r_sec>,<b_sec>,<y_sec>,<g_sec>
     public void updateTimer(String data) {
         if (data == null) return;
         String[] times = data.split(",");
         if (times.length == 4) {
-            for(int i=0; i<4; i++) {
+            for (int i = 0; i < 4; i++) {
                 timerLabels[i].setText(formatTime(Integer.parseInt(times[i])));
             }
         }
     }
 
-    // 초 -> M:SS 포맷
+    // 확장된 TIME_UPDATE2: RED=180;BLUE=120;...
+    public void updateTimerV2(String data) {
+        if (data == null) return;
+        String[] pairs = data.split(";");
+        Map<String, Integer> map = new HashMap<>();
+        for (String p : pairs) {
+            String[] kv = p.split("=");
+            if (kv.length == 2) {
+                try {
+                    map.put(kv[0], Integer.parseInt(kv[1]));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        // 표시는 그대로 기존 timerLabels 활용
+    }
+
     private String formatTime(int seconds) {
         if (seconds < 0) seconds = 0;
         return String.format("%d:%02d", seconds / 60, seconds % 60);
     }
 
-    // 하단 인벤토리가 inventoryDisplayColor만 표시하도록 수정
     private void updateHandPanelUI() {
         handPanel.removeAll();
         handPanelCache.clear();
@@ -310,7 +327,6 @@ public class GameScreen extends JPanel {
         handScrollPane.revalidate();
     }
 
-    // 보드 그리기
     private void drawBoard(Graphics g) {
         Graphics2D g2d = (Graphics2D) g;
 
@@ -326,14 +342,12 @@ public class GameScreen extends JPanel {
             }
         }
 
-        // 시작 코너 표시
-        drawCornerMarker(g2d, 0, 0, getColorForPlayer(1)); // Red
-        drawCornerMarker(g2d, 19, 0, getColorForPlayer(2)); // Blue
-        drawCornerMarker(g2d, 19, 19, getColorForPlayer(3)); // Yellow
-        drawCornerMarker(g2d, 0, 19, getColorForPlayer(4)); // Green
+        drawCornerMarker(g2d, 0, 0, getColorForPlayer(1));
+        drawCornerMarker(g2d, 19, 0, getColorForPlayer(2));
+        drawCornerMarker(g2d, 19, 19, getColorForPlayer(3));
+        drawCornerMarker(g2d, 0, 19, getColorForPlayer(4));
     }
 
-    // 시작 코너 마커 그리기 헬퍼
     private void drawCornerMarker(Graphics2D g, int c, int r, Color color) {
         if (board[r][c] == 0) {
             int x = c * CELL_SIZE;
@@ -345,12 +359,10 @@ public class GameScreen extends JPanel {
         }
     }
 
-    // 고스트 조각 그리기
     private void drawGhostPiece(Graphics g) {
         if (selectedPiece == null || mouseGridPos.x == -1) {
             return;
         }
-
         Graphics2D g2d = (Graphics2D) g;
         List<Point> points = selectedPiece.getPoints();
 
@@ -368,7 +380,6 @@ public class GameScreen extends JPanel {
         }
     }
 
-    // 로컬 유효성 검사 (경계, 겹침)
     private boolean checkLocalPlacement(BlokusPiece piece, int x, int y) {
         List<Point> points = piece.getPoints();
         for (Point p : points) {
@@ -380,7 +391,6 @@ public class GameScreen extends JPanel {
         return true;
     }
 
-    // 마우스 리스너
     private void addMouseListeners() {
         boardPanel.addMouseMotionListener(new MouseMotionAdapter() {
             @Override
@@ -388,7 +398,6 @@ public class GameScreen extends JPanel {
                 if (selectedPiece != null) {
                     int gridX = e.getX() / CELL_SIZE;
                     int gridY = e.getY() / CELL_SIZE;
-
                     if (gridX != mouseGridPos.x || gridY != mouseGridPos.y) {
                         mouseGridPos.setLocation(gridX, gridY);
                         isGhostValid = checkLocalPlacement(selectedPiece, gridX, gridY);
@@ -401,17 +410,12 @@ public class GameScreen extends JPanel {
         boardPanel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                // 보드 클릭 시 채팅창 포커스 해제
                 boardPanel.requestFocusInWindow();
-
-                if (e.getButton() == MouseEvent.BUTTON3) { // 우클릭
+                if (e.getButton() == MouseEvent.BUTTON3) {
                     deselectPiece();
                     return;
                 }
-
-                // [수정됨] isMyTurn() 체크 추가
                 if (selectedPiece != null && isGhostValid && isMyTurn()) {
-                    // C2S_PLACE_BLOCK: <pieceId>:<x>:<y>:<rotation>
                     String message = String.format("%s:%s:%d:%d:%d",
                             Protocol.C2S_PLACE_BLOCK,
                             selectedPiece.getId(),
@@ -421,11 +425,6 @@ public class GameScreen extends JPanel {
                     );
                     client.sendMessage(message);
                     deselectPiece();
-
-                } else if (selectedPiece != null && !isGhostValid) {
-                    System.out.println("놓을 수 없는 위치입니다. (Local Check)");
-                } else if (selectedPiece != null && !isMyTurn()) {
-                    System.out.println("당신의 턴이 아닙니다.");
                 }
             }
 
@@ -437,11 +436,10 @@ public class GameScreen extends JPanel {
         });
     }
 
-    // [수정됨] 인벤토리 패널도 같이 회전
     private void rotateSelectedPiece() {
         if (selectedPiece != null) {
-            selectedPiece.rotate(); // 고스트 회전
-            selectedPanel.rotatePreview(); // 인벤토리 회전
+            selectedPiece.rotate();
+            selectedPanel.rotatePreview();
             currentRotation = (currentRotation + 1) % 4;
             isGhostValid = checkLocalPlacement(selectedPiece, mouseGridPos.x, mouseGridPos.y);
             boardPanel.repaint();
@@ -451,7 +449,6 @@ public class GameScreen extends JPanel {
     private void deselectPiece() {
         if (selectedPanel != null) {
             selectedPanel.setSelected(false);
-            // [신규] 회전한 인벤토리 조각 원복
             selectedPanel.resetRotation(selectedPiece.getId());
         }
         selectedPiece = null;
@@ -461,14 +458,9 @@ public class GameScreen extends JPanel {
         boardPanel.repaint();
     }
 
-    // 1v1 인벤토리 토글
     private void toggleInventoryColor() {
         if (myColors.length > 1) {
-            if (inventoryDisplayColor == myColors[0]) {
-                inventoryDisplayColor = myColors[1];
-            } else {
-                inventoryDisplayColor = myColors[0];
-            }
+            inventoryDisplayColor = (inventoryDisplayColor == myColors[0]) ? myColors[1] : myColors[0];
             updateHandPanelUI();
         }
     }
@@ -483,7 +475,6 @@ public class GameScreen extends JPanel {
         }
     }
 
-    // 채팅 전송
     private void sendChat() {
         String message = chatField.getText();
         if (!message.trim().isEmpty()) {
@@ -492,18 +483,15 @@ public class GameScreen extends JPanel {
         }
     }
 
-    // 채팅 수신
     public void appendChatMessage(String data) {
         chatArea.append(data.replaceFirst(":", ": ") + "\n");
         chatArea.setCaretPosition(chatArea.getDocument().getLength());
     }
 
-    // 채팅 클리어
     public void clearChat() {
         chatArea.setText("");
     }
 
-    // 현재 내 턴인지 확인
     private boolean isMyTurn() {
         for (int c : myColors) {
             if (c == currentTurnColor) {
@@ -513,10 +501,16 @@ public class GameScreen extends JPanel {
         return false;
     }
 
+    public void setTurnColor(String colorStr) {
+        try {
+            int c = Integer.parseInt(colorStr);
+            currentTurnColor = c;
+            currentTurnIndicator.setColor(getColorForPlayer(c));
+            repaint();
+        } catch (NumberFormatException ignored) {}
+    }
 
-    /**
-     * 턴/색상 표시용 사각형 패널
-     */
+    // ColorIndicatorPanel
     private class ColorIndicatorPanel extends JPanel {
         private Color color;
 
@@ -540,21 +534,16 @@ public class GameScreen extends JPanel {
         }
     }
 
-
-    /**
-     * 인벤토리용 블록 조각 시각화 패널
-     */
+    // PiecePreviewPanel
     private class PiecePreviewPanel extends JPanel {
-        private BlokusPiece piece; // [수정됨] 회전/선택 상태를 가지는 인스턴스
+        private BlokusPiece piece;
         private boolean isSelected = false;
         private final int PREVIEW_CELL_SIZE = 8;
         private final Border selectedBorder = BorderFactory.createLineBorder(Color.CYAN, 3);
         private final Border defaultBorder = BorderFactory.createLineBorder(Color.LIGHT_GRAY, 1);
 
         public PiecePreviewPanel(BlokusPiece piece) {
-            // [수정됨] 원본을 복사해서 사용
             this.piece = new BlokusPiece(piece);
-
             int w = piece.getWidth() * PREVIEW_CELL_SIZE + 6;
             int h = piece.getHeight() * PREVIEW_CELL_SIZE + 6;
             setPreferredSize(new Dimension(Math.max(w, 40), Math.max(h, 40)));
@@ -566,11 +555,6 @@ public class GameScreen extends JPanel {
                 public void mouseClicked(MouseEvent e) {
                     boardPanel.requestFocusInWindow();
 
-                    // [수정됨] 턴 제한 제거 (Req 4)
-                    // if (!isMyTurn() || piece.getColor() != currentTurnColor) {
-                    //     return;
-                    // }
-
                     if (e.getButton() == MouseEvent.BUTTON3) {
                         deselectPiece();
                         return;
@@ -581,41 +565,31 @@ public class GameScreen extends JPanel {
                     } else {
                         if (selectedPanel != null) {
                             selectedPanel.setSelected(false);
-                            // [신규] 이전 선택 패널 회전 리셋
                             selectedPanel.resetRotation(selectedPiece.getId());
                         }
-
                         setSelected(true);
                         selectedPanel = PiecePreviewPanel.this;
-                        // [수정됨] 인벤토리 패널의 현재 상태를 복사
                         selectedPiece = new BlokusPiece(PiecePreviewPanel.this.piece);
-                        currentRotation = 0; // 고스트는 항상 0에서 시작
+                        currentRotation = 0;
                     }
                 }
             });
         }
 
-        // [신규] 인벤토리 패널 자체를 회전
         public void rotatePreview() {
-            this.piece.rotate(); // 인벤토리 조각 회전
-
+            this.piece.rotate();
             int w = piece.getWidth() * PREVIEW_CELL_SIZE + 6;
             int h = piece.getHeight() * PREVIEW_CELL_SIZE + 6;
             setPreferredSize(new Dimension(Math.max(w, 40), Math.max(h, 40)));
-
             revalidate();
             repaint();
         }
 
-        // [신규] 선택 해제 시 회전 초기화
         public void resetRotation(String originalId) {
-            // ID와 색상으로 새 조각을 만들어 원본 모양으로 복구
             this.piece = new BlokusPiece(originalId, this.piece.getColor());
-
             int w = piece.getWidth() * PREVIEW_CELL_SIZE + 6;
             int h = piece.getHeight() * PREVIEW_CELL_SIZE + 6;
             setPreferredSize(new Dimension(Math.max(w, 40), Math.max(h, 40)));
-
             revalidate();
             repaint();
         }
@@ -638,10 +612,9 @@ public class GameScreen extends JPanel {
                         PREVIEW_CELL_SIZE);
             }
 
-            // [수정됨] 비활성화 로직 (현재 턴의 색상인가?)
-            boolean isActive = (piece.getColor() == currentTurnColor);
-            if (!isActive) {
-                g.setColor(new Color(255, 255, 255, 180)); // 70%
+            boolean active = (piece.getColor() == currentTurnColor);
+            if (!active) {
+                g.setColor(new Color(255, 255, 255, 180));
                 g.fillRect(0, 0, getWidth(), getHeight());
             }
         }

@@ -7,8 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 블로커스 조각(Piece)을 정의하는 클래스.
- * 21가지 모든 조각의 모양, 회전, 좌표 반환을 관리합니다.
+ * 블로커스 조각(Piece) 정의 (회전 기능 유지)
  */
 public class BlokusPiece {
 
@@ -21,7 +20,6 @@ public class BlokusPiece {
             "F5", "N", "P", "U", "V5", "W", "X", "Y"
     };
 
-    // 조각 모양 원본 데이터 (1=블록, 0=빈칸)
     private static final Map<String, int[][]> SHAPE_DATA = new HashMap<>();
     static {
         SHAPE_DATA.put("I1", new int[][]{{1}});
@@ -55,7 +53,7 @@ public class BlokusPiece {
     private String id;
     private int[][] shape;
     private int color;
-    private int size; // 이 조각을 구성하는 칸 수
+    private int size;
 
     public BlokusPiece(String id, int color) {
         this.id = id;
@@ -68,8 +66,8 @@ public class BlokusPiece {
 
         this.shape = new int[originalShape.length][originalShape[0].length];
         int calculatedSize = 0;
-        for(int i=0; i<originalShape.length; i++) {
-            for (int j=0; j<originalShape[i].length; j++) {
+        for (int i = 0; i < originalShape.length; i++) {
+            for (int j = 0; j < originalShape[i].length; j++) {
                 this.shape[i][j] = originalShape[i][j];
                 if (originalShape[i][j] == 1) {
                     calculatedSize++;
@@ -84,14 +82,11 @@ public class BlokusPiece {
         this.color = other.color;
         this.size = other.size;
         this.shape = new int[other.shape.length][other.shape[0].length];
-        for(int i=0; i<other.shape.length; i++) {
+        for (int i = 0; i < other.shape.length; i++) {
             System.arraycopy(other.shape[i], 0, this.shape[i], 0, other.shape[i].length);
         }
     }
 
-    /**
-     * 조각을 시계 방향으로 90도 회전시킵니다.
-     */
     public void rotate() {
         if (shape == null) return;
         int rows = shape.length;
@@ -106,9 +101,6 @@ public class BlokusPiece {
         this.shape = newShape;
     }
 
-    // [수정됨] 뒤집기(flip) 메소드 제거
-
-    // Getter
     public String getId() { return id; }
     public int[][] getShape() { return shape; }
     public int getColor() { return color; }
@@ -121,7 +113,7 @@ public class BlokusPiece {
         for (int r = 0; r < shape.length; r++) {
             for (int c = 0; c < shape[r].length; c++) {
                 if (shape[r][c] == 1) {
-                    points.add(new Point(c, r)); // (x, y) -> (c, r)
+                    points.add(new Point(c, r));
                 }
             }
         }

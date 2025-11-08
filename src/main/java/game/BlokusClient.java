@@ -1,3 +1,4 @@
+// 주: 기존 기능 + 확장 프로토콜 처리 + 회원가입/로그인2/유저목록/밴/턴변경/색탈락/타이머확장
 package game;
 
 import javax.swing.*;
@@ -8,9 +9,6 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 
-/**
- * 블로커스 클라이언트 메인 클래스.
- */
 public class BlokusClient extends JFrame {
 
     private String serverHost = "localhost";
@@ -32,8 +30,7 @@ public class BlokusClient extends JFrame {
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
-        // [수정됨] 최소/초기 크기를 (800, 830)으로 설정
-        Dimension minSize = new Dimension(800, 830);
+        Dimension minSize = new Dimension(1000, 830);
         setSize(minSize);
         setMinimumSize(minSize);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -42,9 +39,7 @@ public class BlokusClient extends JFrame {
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosing(java.awt.event.WindowEvent windowEvent) {
-                if (out != null) out.close();
-                if (in != null) try { in.close(); } catch (IOException e) {}
-                if (socket != null) try { socket.close(); } catch (IOException e) {}
+                cleanupConnection();
                 System.exit(0);
             }
         });
@@ -69,36 +64,64 @@ public class BlokusClient extends JFrame {
         cardLayout.show(mainPanel, "LOGIN");
     }
 
+    private void cleanupConnection() {
+        if (out != null) out.close();
+        if (in != null) try { in.close(); } catch (IOException e) {}
+        if (socket != null) try { socket.close(); } catch (IOException e) {}
+    }
+
+    // legacy login (아이디만)
     public void attemptLogin(String username) {
         if (username.trim().isEmpty()) {
             JOptionPane.showMessageDialog(this, "이름을 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
-
         try {
-            socket = new Socket(serverHost, serverPort);
-            out = new PrintWriter(socket.getOutputStream(), true);
-            in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-
-            receiver = new ClientReceiver(in, this);
-            receiver.start();
-
+            connect();
             sendMessage(Protocol.C2S_LOGIN + ":" + username);
-
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "서버 연결에 실패했습니다: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    public void attemptLogin2(String username, String password) {
+        if (username.trim().isEmpty() || password.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "이름/비밀번호를 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            connect();
+            sendMessage(ProtocolExt.C2S_LOGIN2 + ":" + username + "|" + password);
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    public void attemptSignup(String username, String password) {
+        if (username.trim().isEmpty() || password.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "이름/비밀번호를 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            connect();
+            sendMessage(ProtocolExt.C2S_SIGNUP + ":" + username + "|" + password);
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void connect() throws IOException {
+        cleanupConnection();
+        socket = new Socket(serverHost, serverPort);
+        out = new PrintWriter(socket.getOutputStream(), true);
+        in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        receiver = new ClientReceiver(in, this);
+        receiver.start();
     }
 
     public void handleConnectionLost() {
         JOptionPane.showMessageDialog(this, "서버와의 연결이 끊겼습니다. 로그인 화면으로 돌아갑니다.", "연결 오류", JOptionPane.ERROR_MESSAGE);
-
-        try {
-            if (out != null) out.close();
-            if (in != null) in.close();
-            if (socket != null) socket.close();
-        } catch (IOException e) {}
-
+        cleanupConnection();
         this.username = null;
         cardLayout.show(mainPanel, "LOGIN");
     }
@@ -115,16 +138,44 @@ public class BlokusClient extends JFrame {
                     this.username = loginScreen.getUsername();
                     cardLayout.show(mainPanel, "LOBBY");
                     sendMessage(Protocol.C2S_GET_ROOM_LIST);
+                    sendMessage(ProtocolExt.C2S_GET_USER_LIST);
                     break;
                 case Protocol.S2C_LOGIN_FAIL:
                     JOptionPane.showMessageDialog(this, "로그인 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
                     handleConnectionLost();
                     break;
+
+                case ProtocolExt.S2C_SIGNUP_SUCCESS:
+                    JOptionPane.showMessageDialog(this, "회원가입 성공! 이제 로그인하세요.", "알림", JOptionPane.INFORMATION_MESSAGE);
+                    handleConnectionLost(); // 재접속 필요
+                    break;
+                case ProtocolExt.S2C_SIGNUP_FAIL:
+                    JOptionPane.showMessageDialog(this, "회원가입 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
+                    handleConnectionLost();
+                    break;
+
+                case ProtocolExt.S2C_YOU_ARE_ADMIN:
+                    lobbyScreen.setAdmin(true);
+                    break;
+                case ProtocolExt.S2C_USER_LIST:
+                    lobbyScreen.updateUserList(data);
+                    break;
+                case ProtocolExt.S2C_BAN_RESULT:
+                    JOptionPane.showMessageDialog(this, "밴 결과: " + data, "알림", JOptionPane.INFORMATION_MESSAGE);
+                    sendMessage(ProtocolExt.C2S_GET_USER_LIST);
+                    break;
+                case ProtocolExt.S2C_CHANGE_PASSWORD_OK:
+                    JOptionPane.showMessageDialog(this, "비밀번호 변경 성공", "알림", JOptionPane.INFORMATION_MESSAGE);
+                    break;
+                case ProtocolExt.S2C_CHANGE_PASSWORD_FAIL:
+                    JOptionPane.showMessageDialog(this, "비밀번호 변경 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
+                    break;
+
                 case Protocol.S2C_ROOM_LIST:
                     lobbyScreen.updateRoomList(data);
                     break;
                 case Protocol.S2C_JOIN_SUCCESS:
-                    roomScreen.setRoomName(data.split(":")[1]);
+                    roomScreen.setRoomName(data.split(":")[2]);
                     roomScreen.clearChat();
                     cardLayout.show(mainPanel, "ROOM");
                     break;
@@ -150,9 +201,11 @@ public class BlokusClient extends JFrame {
                 case Protocol.S2C_HAND_UPDATE:
                     gameScreen.updatePlayerHand(data);
                     break;
-                // 타이머 수신
                 case Protocol.S2C_TIME_UPDATE:
                     gameScreen.updateTimer(data);
+                    break;
+                case ProtocolExt.S2C_TIME_UPDATE2:
+                    gameScreen.updateTimerV2(data);
                     break;
                 case Protocol.S2C_INVALID_MOVE:
                     JOptionPane.showMessageDialog(this, "잘못된 이동: " + data, "알림", JOptionPane.WARNING_MESSAGE);
@@ -167,40 +220,45 @@ public class BlokusClient extends JFrame {
                     gameScreen.appendChatMessage(data);
                     break;
                 case Protocol.S2C_SYSTEM_MSG:
-                    if (data != null && data.contains("로비로 이동합니다.")) {
+                    if (data != null && data.contains("로비로")) {
                         cardLayout.show(mainPanel, "LOBBY");
                         sendMessage(Protocol.C2S_GET_ROOM_LIST);
-                    } else {
-                        String sysMsg = "[시스템]:" + data;
-                        roomScreen.appendChatMessage(sysMsg);
-                        gameScreen.appendChatMessage(sysMsg);
+                    }
+                    String sysMsg = "[시스템]:" + data;
+                    roomScreen.appendChatMessage(sysMsg);
+                    gameScreen.appendChatMessage(sysMsg);
+                    break;
+                case ProtocolExt.S2C_TURN_CHANGED:
+                    if (data != null) {
+                        String[] ps = data.split("\\|");
+                        if (ps.length >= 1) gameScreen.setTurnColor(ps[0]);
+                        gameScreen.appendChatMessage("[시스템]: 턴 변경 → " + ps[0] + " (" + (ps.length > 1 ? ps[1] : "") + ")");
+                    }
+                    break;
+                case ProtocolExt.S2C_COLOR_ELIMINATED:
+                    if (data != null) {
+                        String[] ps = data.split("\\|");
+                        gameScreen.appendChatMessage("[시스템]: " + ps[0] + " 색 탈락 (" + (ps.length > 1 ? ps[1] : "원인없음") + ")");
                     }
                     break;
             }
         });
     }
 
-    public void sendMessage(String message) {
-        if (out != null) {
-            out.println(message);
-        }
+    public void sendMessage(String msg) {
+        if (out != null) out.println(msg);
     }
 
-    public String getUsername() { return this.username; }
+    public String getUsername() { return username; }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            new BlokusClient().setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new BlokusClient().setVisible(true));
     }
 }
 
-/**
- * 서버 메시지 수신 스레드
- */
 class ClientReceiver extends Thread {
-    private BufferedReader in;
-    private BlokusClient client;
+    private final BufferedReader in;
+    private final BlokusClient client;
 
     public ClientReceiver(BufferedReader in, BlokusClient client) {
         this.in = in;
@@ -221,22 +279,30 @@ class ClientReceiver extends Thread {
     }
 }
 
-
-// --- UI 패널들 ---
-
+// LoginScreen (회원가입/로그인2)
 class LoginScreen extends JPanel {
-    private BlokusClient client;
-    private JTextField usernameField;
+    private final BlokusClient client;
+    private final JTextField usernameField;
+    private final JPasswordField passwordField;
 
     public LoginScreen(BlokusClient client) {
         this.client = client;
         setLayout(new FlowLayout());
         add(new JLabel("이름:"));
-        usernameField = new JTextField(15);
+        usernameField = new JTextField(12);
         add(usernameField);
-        JButton loginButton = new JButton("로그인/접속");
-        loginButton.addActionListener(e -> client.attemptLogin(usernameField.getText()));
+
+        add(new JLabel("비밀번호:"));
+        passwordField = new JPasswordField(12);
+        add(passwordField);
+
+        JButton loginButton = new JButton("로그인");
+        loginButton.addActionListener(e -> client.attemptLogin2(usernameField.getText(), new String(passwordField.getPassword())));
         add(loginButton);
+
+        JButton signupButton = new JButton("회원가입");
+        signupButton.addActionListener(e -> client.attemptSignup(usernameField.getText(), new String(passwordField.getPassword())));
+        add(signupButton);
     }
 
     public String getUsername() {
@@ -244,10 +310,18 @@ class LoginScreen extends JPanel {
     }
 }
 
+// LobbyScreen (유저 목록, 밴, 비번 변경)
 class LobbyScreen extends JPanel {
-    private BlokusClient client;
-    private JList<String> roomList;
-    private DefaultListModel<String> roomListModel;
+    private final BlokusClient client;
+    private final JList<String> roomList;
+    private final DefaultListModel<String> roomListModel;
+
+    private final DefaultListModel<String> userListModel;
+    private final JList<String> userList;
+    private final JButton banButton;
+    private final JButton refreshButton;
+    private final JButton pwdChangeButton;
+    private boolean isAdmin = false;
 
     public LobbyScreen(BlokusClient client) {
         this.client = client;
@@ -256,6 +330,55 @@ class LobbyScreen extends JPanel {
         roomListModel = new DefaultListModel<>();
         roomList = new JList<>(roomListModel);
         add(new JScrollPane(roomList), BorderLayout.CENTER);
+
+        JPanel rightPanel = new JPanel(new BorderLayout(5, 5));
+        rightPanel.setPreferredSize(new Dimension(300, 0));
+        JPanel rightTop = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        rightTop.add(new JLabel("접속자 목록"));
+        rightPanel.add(rightTop, BorderLayout.NORTH);
+
+        userListModel = new DefaultListModel<>();
+        userList = new JList<>(userListModel);
+        rightPanel.add(new JScrollPane(userList), BorderLayout.CENTER);
+
+        JPanel rightBottom = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        pwdChangeButton = new JButton("비번변경");
+        pwdChangeButton.addActionListener(e -> {
+            JPasswordField oldF = new JPasswordField();
+            JPasswordField newF = new JPasswordField();
+            Object[] msg = {"기존 비번:", oldF, "새 비번:", newF};
+            int c = JOptionPane.showConfirmDialog(this, msg, "비밀번호 변경", JOptionPane.OK_CANCEL_OPTION);
+            if (c == JOptionPane.OK_OPTION) {
+                String oldP = new String(oldF.getPassword());
+                String newP = new String(newF.getPassword());
+                client.sendMessage(ProtocolExt.C2S_CHANGE_PASSWORD + ":" + oldP + "|" + newP);
+            }
+        });
+
+        refreshButton = new JButton("새로고침");
+        refreshButton.addActionListener(e -> {
+            client.sendMessage(Protocol.C2S_GET_ROOM_LIST);
+            client.sendMessage(ProtocolExt.C2S_GET_USER_LIST);
+        });
+
+        banButton = new JButton("밴");
+        banButton.addActionListener(e -> {
+            String sel = userList.getSelectedValue();
+            if (sel != null) {
+                String target = sel.split("[,\\s]")[0];
+                int c = JOptionPane.showConfirmDialog(this, target + " 을(를) 밴하시겠습니까?", "확인", JOptionPane.YES_NO_OPTION);
+                if (c == JOptionPane.YES_OPTION) {
+                    client.sendMessage(ProtocolExt.C2S_BAN_USER + ":" + target);
+                }
+            }
+        });
+        rightBottom.add(pwdChangeButton);
+        rightBottom.add(refreshButton);
+        rightBottom.add(banButton);
+        rightPanel.add(rightBottom, BorderLayout.SOUTH);
+
+        add(rightPanel, BorderLayout.EAST);
+        updateAdmin(false);
 
         JPanel bottomPanel = new JPanel();
         JTextField roomNameField = new JTextField(15);
@@ -284,11 +407,34 @@ class LobbyScreen extends JPanel {
         });
         bottomPanel.add(joinButton);
 
-        JButton refreshButton = new JButton("새로고침");
-        refreshButton.addActionListener(e -> client.sendMessage(Protocol.C2S_GET_ROOM_LIST));
-        bottomPanel.add(refreshButton);
+        JButton refreshRoomsButton = new JButton("방 새로고침");
+        refreshRoomsButton.addActionListener(e -> client.sendMessage(Protocol.C2S_GET_ROOM_LIST));
+        bottomPanel.add(refreshRoomsButton);
 
         add(bottomPanel, BorderLayout.SOUTH);
+    }
+
+    private void updateAdmin(boolean admin) {
+        this.isAdmin = admin;
+        banButton.setEnabled(isAdmin);
+    }
+
+    public void setAdmin(boolean admin) {
+        updateAdmin(admin);
+    }
+
+    public void updateUserList(String data) {
+        userListModel.clear();
+        if (data == null || data.isEmpty()) return;
+        String[] users = data.split(";");
+        for (String u : users) {
+            if (u.isBlank()) continue;
+            String body = u;
+            if (u.startsWith("[") && u.endsWith("]")) {
+                body = u.substring(1, u.length() - 1);
+            }
+            userListModel.addElement(body); // name,status
+        }
     }
 
     public void updateRoomList(String data) {
@@ -299,6 +445,7 @@ class LobbyScreen extends JPanel {
         }
         String[] rooms = data.split(";");
         for (String room : rooms) {
+            if (room.isBlank()) continue;
             String roomInfo = room.substring(1, room.length() - 1);
             String[] parts = roomInfo.split(",");
             if (parts.length >= 3) {
@@ -308,16 +455,17 @@ class LobbyScreen extends JPanel {
     }
 }
 
+// RoomScreen (기존 + 게임 시작 / 강퇴 / 나가기)
 class RoomScreen extends JPanel {
-    private BlokusClient client;
-    private JLabel roomNameLabel;
-    private JList<String> playerList;
-    private DefaultListModel<String> playerListModel;
-    private JButton startButton;
-    private JButton kickButton;
+    private final BlokusClient client;
+    private final JLabel roomNameLabel;
+    private final JList<String> playerList;
+    private final DefaultListModel<String> playerListModel;
+    private final JButton startButton;
+    private final JButton kickButton;
 
-    private JTextArea chatArea;
-    private JTextField chatField;
+    private final JTextArea chatArea;
+    private final JTextField chatField;
 
     public RoomScreen(BlokusClient client) {
         this.client = client;
@@ -348,7 +496,6 @@ class RoomScreen extends JPanel {
         chatPanel.setPreferredSize(new Dimension(250, 0));
         add(chatPanel, BorderLayout.WEST);
 
-
         JPanel bottomPanel = new JPanel();
         startButton = new JButton("게임 시작");
         startButton.addActionListener(e -> client.sendMessage(Protocol.C2S_START_GAME));
@@ -357,7 +504,7 @@ class RoomScreen extends JPanel {
         kickButton = new JButton("강퇴하기");
         kickButton.addActionListener(e -> {
             String selected = playerList.getSelectedValue();
-            if(selected != null) {
+            if (selected != null) {
                 String targetUser = selected.split(" ")[0];
                 client.sendMessage(Protocol.C2S_KICK_PLAYER + ":" + targetUser);
             }
@@ -400,6 +547,7 @@ class RoomScreen extends JPanel {
 
         String[] players = data.split(";");
         for (String player : players) {
+            if (player.isBlank()) continue;
             String playerInfo = player.substring(1, player.length() - 1);
             String[] parts = playerInfo.split(",");
             if (parts.length < 2) continue;
@@ -415,27 +563,16 @@ class RoomScreen extends JPanel {
             }
             playerListModel.addElement(displayText);
         }
-
         startButton.setVisible(amIHost);
         kickButton.setVisible(amIHost);
     }
 }
 
-// [신규] 자동 줄바꿈을 위한 WrapLayout 헬퍼 클래스
+// WrapLayout 그대로 (자동 줄바꿈)
 class WrapLayout extends FlowLayout {
-    private Dimension preferredLayoutSize;
-
-    public WrapLayout() {
-        super();
-    }
-
-    public WrapLayout(int align) {
-        super(align);
-    }
-
-    public WrapLayout(int align, int hgap, int vgap) {
-        super(align, hgap, vgap);
-    }
+    public WrapLayout() { super(); }
+    public WrapLayout(int align) { super(align); }
+    public WrapLayout(int align, int hgap, int vgap) { super(align, hgap, vgap); }
 
     @Override
     public Dimension preferredLayoutSize(Container target) {
@@ -451,18 +588,12 @@ class WrapLayout extends FlowLayout {
 
     private Dimension layoutSize(Container target, boolean preferred) {
         synchronized (target.getTreeLock()) {
-
-            // [버그 수정] 스크롤 패널의 뷰포트 너비를 가져오도록 수정
             int targetWidth = target.getSize().width;
-            Container scrollPaneContainer = SwingUtilities.getAncestorOfClass(JScrollPane.class, target);
-            JScrollPane scrollPane = null;
-            if (scrollPaneContainer != null) {
-                scrollPane = (JScrollPane) scrollPaneContainer; // [수정] JScrollPane으로 캐스팅
-                targetWidth = scrollPane.getViewport().getSize().width; // [수정] getViewport() 호출
+            Container scrollPane = SwingUtilities.getAncestorOfClass(JScrollPane.class, target);
+            if (scrollPane != null) {
+                targetWidth = ((JScrollPane) scrollPane).getViewport().getSize().width;
             }
-
-            if (targetWidth == 0)
-                targetWidth = Integer.MAX_VALUE;
+            if (targetWidth == 0) targetWidth = Integer.MAX_VALUE;
 
             int hgap = getHgap();
             int vgap = getVgap();
@@ -484,9 +615,7 @@ class WrapLayout extends FlowLayout {
                         rowWidth = 0;
                         rowHeight = 0;
                     }
-                    if (rowWidth != 0) {
-                        rowWidth += hgap;
-                    }
+                    if (rowWidth != 0) rowWidth += hgap;
                     rowWidth += d.width;
                     rowHeight = Math.max(rowHeight, d.height);
                 }
@@ -496,19 +625,13 @@ class WrapLayout extends FlowLayout {
             dim.width += horizontalInsetsAndGap;
             dim.height += insets.top + insets.bottom + vgap * 2;
 
-            if (scrollPane != null) {
-                dim.width = targetWidth;
-            }
-
             return dim;
         }
     }
 
     private void addRow(Dimension dim, int rowWidth, int rowHeight) {
         dim.width = Math.max(dim.width, rowWidth);
-        if (dim.height > 0) {
-            dim.height += getVgap();
-        }
+        if (dim.height > 0) dim.height += getVgap();
         dim.height += rowHeight;
     }
 }
