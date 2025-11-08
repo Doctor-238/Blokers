@@ -1,5 +1,6 @@
 plugins {
     id 'org.jetbrains.kotlin.jvm' version '2.1.20'
+    id 'application'
 }
 
 group = 'blokers'
@@ -16,6 +17,36 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
 kotlin {
     jvmToolchain(17)
+}
+
+// Configure application plugin for easy execution
+application {
+    // Default to client for 'gradle run'
+    mainClass = 'game.BlokusClient'
+}
+
+// Task to run server
+task runServer(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'game.BlokusServer'
+    description = 'Run the Blokers game server'
+}
+
+// Task to run client  
+task runClient(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'game.BlokusClient'
+    description = 'Run the Blokers game client'
+}
+
+// Configure JAR to be executable
+jar {
+    manifest {
+        attributes(
+            'Main-Class': 'game.BlokusClient'
+        )
+    }
 }
