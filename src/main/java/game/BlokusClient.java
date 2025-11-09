@@ -1,4 +1,3 @@
-// 주: 기존 기능 + 확장 프로토콜 처리 + 회원가입/로그인2/유저목록/밴/턴변경/색탈락/타이머확장
 package game;
 
 import javax.swing.*;
@@ -70,7 +69,6 @@ public class BlokusClient extends JFrame {
         if (socket != null) try { socket.close(); } catch (IOException e) {}
     }
 
-    // legacy login (아이디만)
     public void attemptLogin(String username) {
         if (username.trim().isEmpty()) {
             JOptionPane.showMessageDialog(this, "이름을 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
@@ -79,32 +77,6 @@ public class BlokusClient extends JFrame {
         try {
             connect();
             sendMessage(Protocol.C2S_LOGIN + ":" + username);
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    public void attemptLogin2(String username, String password) {
-        if (username.trim().isEmpty() || password.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "이름/비밀번호를 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        try {
-            connect();
-            sendMessage(ProtocolExt.C2S_LOGIN2 + ":" + username + "|" + password);
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    public void attemptSignup(String username, String password) {
-        if (username.trim().isEmpty() || password.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "이름/비밀번호를 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        try {
-            connect();
-            sendMessage(ProtocolExt.C2S_SIGNUP + ":" + username + "|" + password);
         } catch (IOException e) {
             JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
         }
@@ -147,7 +119,7 @@ public class BlokusClient extends JFrame {
 
                 case ProtocolExt.S2C_SIGNUP_SUCCESS:
                     JOptionPane.showMessageDialog(this, "회원가입 성공! 이제 로그인하세요.", "알림", JOptionPane.INFORMATION_MESSAGE);
-                    handleConnectionLost(); // 재접속 필요
+                    handleConnectionLost();
                     break;
                 case ProtocolExt.S2C_SIGNUP_FAIL:
                     JOptionPane.showMessageDialog(this, "회원가입 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
@@ -279,11 +251,9 @@ class ClientReceiver extends Thread {
     }
 }
 
-// LoginScreen (회원가입/로그인2)
 class LoginScreen extends JPanel {
     private final BlokusClient client;
     private final JTextField usernameField;
-    private final JPasswordField passwordField;
 
     public LoginScreen(BlokusClient client) {
         this.client = client;
@@ -292,17 +262,9 @@ class LoginScreen extends JPanel {
         usernameField = new JTextField(12);
         add(usernameField);
 
-        add(new JLabel("비밀번호:"));
-        passwordField = new JPasswordField(12);
-        add(passwordField);
-
-        JButton loginButton = new JButton("로그인");
-        loginButton.addActionListener(e -> client.attemptLogin2(usernameField.getText(), new String(passwordField.getPassword())));
+        JButton loginButton = new JButton("접속");
+        loginButton.addActionListener(e -> client.attemptLogin(usernameField.getText()));
         add(loginButton);
-
-        JButton signupButton = new JButton("회원가입");
-        signupButton.addActionListener(e -> client.attemptSignup(usernameField.getText(), new String(passwordField.getPassword())));
-        add(signupButton);
     }
 
     public String getUsername() {
@@ -310,7 +272,6 @@ class LoginScreen extends JPanel {
     }
 }
 
-// LobbyScreen (유저 목록, 밴, 비번 변경)
 class LobbyScreen extends JPanel {
     private final BlokusClient client;
     private final JList<String> roomList;
@@ -417,6 +378,7 @@ class LobbyScreen extends JPanel {
     private void updateAdmin(boolean admin) {
         this.isAdmin = admin;
         banButton.setEnabled(isAdmin);
+        pwdChangeButton.setVisible(false);
     }
 
     public void setAdmin(boolean admin) {
@@ -433,7 +395,7 @@ class LobbyScreen extends JPanel {
             if (u.startsWith("[") && u.endsWith("]")) {
                 body = u.substring(1, u.length() - 1);
             }
-            userListModel.addElement(body); // name,status
+            userListModel.addElement(body);
         }
     }
 
@@ -455,7 +417,6 @@ class LobbyScreen extends JPanel {
     }
 }
 
-// RoomScreen (기존 + 게임 시작 / 강퇴 / 나가기)
 class RoomScreen extends JPanel {
     private final BlokusClient client;
     private final JLabel roomNameLabel;
@@ -464,7 +425,9 @@ class RoomScreen extends JPanel {
     private final JButton startButton;
     private final JButton kickButton;
 
-    private final JTextArea chatArea;
+    private JTabbedPane chatTabs;
+    private JTextArea chatArea;
+    private JTextArea systemArea;
     private final JTextField chatField;
 
     public RoomScreen(BlokusClient client) {
@@ -479,10 +442,20 @@ class RoomScreen extends JPanel {
         add(new JScrollPane(playerList), BorderLayout.CENTER);
 
         JPanel chatPanel = new JPanel(new BorderLayout());
+        chatTabs = new JTabbedPane();
+
         chatArea = new JTextArea();
         chatArea.setEditable(false);
         chatArea.setLineWrap(true);
-        chatPanel.add(new JScrollPane(chatArea), BorderLayout.CENTER);
+        chatTabs.addTab("채팅", new JScrollPane(chatArea));
+
+        systemArea = new JTextArea();
+        systemArea.setEditable(false);
+        systemArea.setLineWrap(true);
+        chatTabs.addTab("시스템", new JScrollPane(systemArea));
+
+        chatPanel.add(chatTabs, BorderLayout.CENTER);
+
 
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
@@ -527,12 +500,19 @@ class RoomScreen extends JPanel {
     }
 
     public void appendChatMessage(String data) {
-        chatArea.append(data.replaceFirst(":", ": ") + "\n");
-        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        String message = data.replaceFirst(":", ": ") + "\n";
+        if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+            systemArea.append(message);
+            systemArea.setCaretPosition(systemArea.getDocument().getLength());
+        } else {
+            chatArea.append(message);
+            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        }
     }
 
     public void clearChat() {
         chatArea.setText("");
+        systemArea.setText("");
     }
 
     public void setRoomName(String name) {
@@ -568,7 +548,6 @@ class RoomScreen extends JPanel {
     }
 }
 
-// WrapLayout 그대로 (자동 줄바꿈)
 class WrapLayout extends FlowLayout {
     public WrapLayout() { super(); }
     public WrapLayout(int align) { super(align); }

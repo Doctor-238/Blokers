@@ -4,10 +4,6 @@ import java.awt.*;
 import java.util.*;
 import java.util.List;
 
-/**
- * 개별 게임방을 관리하는 클래스.
- * (턴 변경 방송 / 색 탈락 / 기권 / 확장 타이머 / disconnect/ban=>기권 처리)
- */
 public class GameRoom {
     private int roomId;
     private String roomName;
@@ -29,7 +25,7 @@ public class GameRoom {
     private int passCount = 0;
 
     private static final int INITIAL_TIME_SECONDS = 300;
-    private static final int TIME_BONUS_SECONDS = 10;
+    private static final int TIME_BONUS_SECONDS = 20;
     private Timer gameTimer;
     private TimerTask currentTimerTask;
     private Map<Integer, Integer> remainingTime = Collections.synchronizedMap(new HashMap<>());
@@ -65,7 +61,6 @@ public class GameRoom {
         player.setCurrentRoom(null);
 
         if (gameStarted) {
-            // 게임 중 나감 => 기권 처리 이미 handleDisconnectOrResign에서 호출됨
             if (players.size() < 2) {
                 handleGameOver(true);
             }
@@ -159,12 +154,6 @@ public class GameRoom {
     }
 
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
-        if (isTimedOut.get(currentTurnColor)) {
-            player.sendMessage(Protocol.S2C_INVALID_MOVE + ":시간이 초과되어 이 색상으로는 놓을 수 없습니다.");
-            return;
-        }
-
-        // 턴 검사 (1v1 / 4인에 따라)
         ClientHandler turnPlayer;
         if (playerCountOnStart == 4) {
             turnPlayer = players.get(currentPlayerTurnIndex);
@@ -225,7 +214,6 @@ public class GameRoom {
     }
 
     public synchronized void handlePassTurn(ClientHandler player) {
-        // 플레이어 검증
         if (player != null) {
             ClientHandler turnPlayer = (playerCountOnStart == 4)
                     ? players.get(currentPlayerTurnIndex)
@@ -244,7 +232,6 @@ public class GameRoom {
         }
     }
 
-    // 기권/강제 종료/끊김/밴 처리
     public synchronized void handleDisconnectOrResign(ClientHandler player, String reason) {
         if (!gameStarted) return;
         int[] colors = playerColors.get(player);
@@ -257,7 +244,6 @@ public class GameRoom {
             }
         }
         if (players.contains(player)) {
-            // 실제 자리 제거
             removePlayer(player);
         }
         if (players.size() < 2 && gameStarted) {
@@ -265,11 +251,7 @@ public class GameRoom {
         }
     }
 
-    // --- 내부 헬퍼 ---
-
     private boolean isValidMove(BlokusPiece piece, int x, int y, int color) {
-        if (isTimedOut.get(color)) return false;
-
         List<Point> pieceCoords = piece.getPoints();
         boolean isFirstMove = isFirstMoveForColor.get(color);
         boolean cornerTouch = false;
@@ -372,8 +354,7 @@ public class GameRoom {
                     remainingTime.put(currentTurnColor, time);
 
                     if (time <= 0) {
-                        isTimedOut.put(currentTurnColor, true);
-                        broadcastMessage(ProtocolExt.S2C_COLOR_ELIMINATED + ":" + currentTurnColor + "|timeout");
+                        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
                         handlePassTurn(null);
                         this.cancel();
@@ -387,7 +368,6 @@ public class GameRoom {
     }
 
     private void broadcastTimeUpdate() {
-        // 확장 버전도 함께 전송
         String legacy = String.format("%s:%d,%d,%d,%d",
                 Protocol.S2C_TIME_UPDATE,
                 remainingTime.get(1),

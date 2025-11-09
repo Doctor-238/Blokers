@@ -1,4 +1,3 @@
-// 상태바(한 줄 표시), ㄱ 키 회전, 기권 버튼(RESIGN) 추가를 위해 확장된 버전
 package game;
 
 import javax.swing.*;
@@ -43,10 +42,13 @@ public class GameScreen extends JPanel {
 
     private ColorIndicatorPanel currentTurnIndicator;
     private JPanel myColorsPanel;
+    private JLabel scoreLabel;
 
     private JLabel[] timerLabels = new JLabel[4];
 
+    private JTabbedPane chatTabs;
     private JTextArea chatArea;
+    private JTextArea systemArea;
     private JTextField chatField;
 
     public GameScreen(BlokusClient client) {
@@ -69,6 +71,12 @@ public class GameScreen extends JPanel {
 
         myColorsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
         myColorsPanel.add(new JLabel("내 색상: "));
+
+        scoreLabel = new JLabel("남은 점수: 89");
+        scoreLabel.setFont(new Font("맑은 고딕", Font.BOLD, 14));
+        myColorsPanel.add(new JSeparator(SwingConstants.VERTICAL));
+        myColorsPanel.add(scoreLabel);
+
         infoPanel.add(myColorsPanel, BorderLayout.CENTER);
 
         JPanel timerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
@@ -103,10 +111,9 @@ public class GameScreen extends JPanel {
                         "관전 선택", JOptionPane.DEFAULT_OPTION,
                         JOptionPane.QUESTION_MESSAGE, null, opts, opts[0]);
                 if (sel == 1) {
-                    // 로비 이동은 서버 SYSTEM_MSG 로직 재활용
-                    client.sendMessage(Protocol.C2S_LEAVE_ROOM); // 게임 중이라 실패할 수 있음 -> 서버 기권 후 로비 이동 구현 필요(간단 예시)
+                    client.sendMessage(Protocol.C2S_LEAVE_ROOM);
                 } else {
-                    client.sendMessage(ProtocolExt.C2S_SPECTATE + ":" + ""); // roomId 필요시 확장
+                    client.sendMessage(ProtocolExt.C2S_SPECTATE + ":" + "");
                 }
             }
         });
@@ -147,10 +154,19 @@ public class GameScreen extends JPanel {
         add(southPanel, BorderLayout.SOUTH);
 
         JPanel chatPanel = new JPanel(new BorderLayout());
+        chatTabs = new JTabbedPane();
+
         chatArea = new JTextArea();
         chatArea.setEditable(false);
         chatArea.setLineWrap(true);
-        chatPanel.add(new JScrollPane(chatArea), BorderLayout.CENTER);
+        chatTabs.addTab("채팅", new JScrollPane(chatArea));
+
+        systemArea = new JTextArea();
+        systemArea.setEditable(false);
+        systemArea.setLineWrap(true);
+        chatTabs.addTab("시스템", new JScrollPane(systemArea));
+
+        chatPanel.add(chatTabs, BorderLayout.CENTER);
 
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
@@ -173,7 +189,6 @@ public class GameScreen extends JPanel {
 
         im.put(KeyStroke.getKeyStroke('r'), "rotateAction");
         im.put(KeyStroke.getKeyStroke('R'), "rotateAction");
-        // 한글 'ㄱ' (유니코드: U+3131)
         im.put(KeyStroke.getKeyStroke('ㄱ'), "rotateAction");
 
         am.put("rotateAction", new AbstractAction() {
@@ -197,6 +212,12 @@ public class GameScreen extends JPanel {
             myColors[i] = Integer.parseInt(colorsStr[i]);
             myColorsPanel.add(new ColorIndicatorPanel(getColorForPlayer(myColors[i])));
         }
+
+        int startScore = (myColors.length == 2) ? 178 : 89;
+        scoreLabel.setText("남은 점수: " + startScore);
+        myColorsPanel.add(new JSeparator(SwingConstants.VERTICAL));
+        myColorsPanel.add(scoreLabel);
+
         myColorsPanel.revalidate();
         myColorsPanel.repaint();
 
@@ -261,6 +282,7 @@ public class GameScreen extends JPanel {
 
     public void updatePlayerHand(String data) {
         myHand.clear();
+        int totalScore = 0;
         if (data != null && !data.isEmpty()) {
             String[] pieces = data.split(",");
             for (String p : pieces) {
@@ -268,9 +290,12 @@ public class GameScreen extends JPanel {
                 if (pieceData.length != 2) continue;
                 String id = pieceData[0];
                 int color = Integer.parseInt(pieceData[1]);
-                myHand.add(new BlokusPiece(id, color));
+                BlokusPiece newPiece = new BlokusPiece(id, color);
+                myHand.add(newPiece);
+                totalScore += newPiece.getSize();
             }
         }
+        scoreLabel.setText("남은 점수: " + totalScore);
         updateHandPanelUI();
     }
 
@@ -284,7 +309,6 @@ public class GameScreen extends JPanel {
         }
     }
 
-    // 확장된 TIME_UPDATE2: RED=180;BLUE=120;...
     public void updateTimerV2(String data) {
         if (data == null) return;
         String[] pairs = data.split(";");
@@ -297,7 +321,6 @@ public class GameScreen extends JPanel {
                 } catch (NumberFormatException ignored) {}
             }
         }
-        // 표시는 그대로 기존 timerLabels 활용
     }
 
     private String formatTime(int seconds) {
@@ -333,11 +356,32 @@ public class GameScreen extends JPanel {
         for (int r = 0; r < BOARD_SIZE; r++) {
             for (int c = 0; c < BOARD_SIZE; c++) {
                 g2d.setColor(Color.DARK_GRAY);
-                g2d.drawRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                int x = c * CELL_SIZE;
+                int y = r * CELL_SIZE;
+                g2d.drawRect(x, y, CELL_SIZE, CELL_SIZE);
 
                 if (board[r][c] != 0) {
-                    g2d.setColor(getColorForPlayer(board[r][c]));
-                    g2d.fillRect(c * CELL_SIZE + 1, r * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                    int pieceColorNum = board[r][c];
+                    Color pieceColor = getColorForPlayer(pieceColorNum);
+
+                    g2d.setColor(pieceColor);
+                    g2d.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+
+                    g2d.setColor(Color.BLACK);
+                    g2d.drawRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+
+                    boolean isMyPiece = false;
+                    for (int myC : myColors) {
+                        if (myC == pieceColorNum) {
+                            isMyPiece = true;
+                            break;
+                        }
+                    }
+
+                    if (isMyPiece) {
+                        g2d.setColor(Color.WHITE);
+                        g2d.fillOval(x + CELL_SIZE - 7, y + CELL_SIZE - 7, 5, 5);
+                    }
                 }
             }
         }
@@ -484,12 +528,19 @@ public class GameScreen extends JPanel {
     }
 
     public void appendChatMessage(String data) {
-        chatArea.append(data.replaceFirst(":", ": ") + "\n");
-        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        String message = data.replaceFirst(":", ": ") + "\n";
+        if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+            systemArea.append(message);
+            systemArea.setCaretPosition(systemArea.getDocument().getLength());
+        } else {
+            chatArea.append(message);
+            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        }
     }
 
     public void clearChat() {
         chatArea.setText("");
+        systemArea.setText("");
     }
 
     private boolean isMyTurn() {
@@ -510,7 +561,6 @@ public class GameScreen extends JPanel {
         } catch (NumberFormatException ignored) {}
     }
 
-    // ColorIndicatorPanel
     private class ColorIndicatorPanel extends JPanel {
         private Color color;
 
@@ -534,7 +584,6 @@ public class GameScreen extends JPanel {
         }
     }
 
-    // PiecePreviewPanel
     private class PiecePreviewPanel extends JPanel {
         private BlokusPiece piece;
         private boolean isSelected = false;
@@ -602,14 +651,18 @@ public class GameScreen extends JPanel {
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-            g.setColor(getColorForPlayer(piece.getColor()));
+            Color pieceColor = getColorForPlayer(piece.getColor());
+            g.setColor(pieceColor);
             List<Point> points = piece.getPoints();
 
             for (Point p : points) {
-                g.fillRect(3 + p.x * PREVIEW_CELL_SIZE,
-                        3 + p.y * PREVIEW_CELL_SIZE,
-                        PREVIEW_CELL_SIZE,
-                        PREVIEW_CELL_SIZE);
+                int x = 3 + p.x * PREVIEW_CELL_SIZE;
+                int y = 3 + p.y * PREVIEW_CELL_SIZE;
+                g.fillRect(x, y, PREVIEW_CELL_SIZE, PREVIEW_CELL_SIZE);
+
+                g.setColor(Color.BLACK);
+                g.drawRect(x, y, PREVIEW_CELL_SIZE, PREVIEW_CELL_SIZE);
+                g.setColor(pieceColor);
             }
 
             boolean active = (piece.getColor() == currentTurnColor);
