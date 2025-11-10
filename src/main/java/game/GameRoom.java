@@ -256,6 +256,39 @@ public class GameRoom {
         }
     }
 
+    // (기권) C2S_RESIGN_COLOR (버튼 기권) 처리
+    public synchronized void handleResignColor(ClientHandler player, String data) {
+        if (!gameStarted) return;
+
+        try {
+            int colorToResign = Integer.parseInt(data);
+
+            // 본인 턴의 색상만 기권 가능
+            if (colorToResign != currentTurnColor) {
+                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":현재 턴의 색상만 기권할 수 있습니다.");
+                return;
+            }
+
+            ClientHandler turnPlayer = getPlayerByColor(currentTurnColor);
+            if (turnPlayer == null || !turnPlayer.equals(player)) {
+                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
+                return;
+            }
+
+            if (!isTimedOut.get(colorToResign)) {
+                isTimedOut.put(colorToResign, true);
+                broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색이 기권했습니다.");
+            }
+
+            // 기권도 턴을 넘김 (passCount는 증가시키지 않음)
+            handlePassTurn(null);
+
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid C2S_RESIGN_COLOR data: " + data);
+        }
+    }
+
+    // (기권) 이 메서드는 이제 *연결 끊김* (disconnect) 시에만 호출됨
     public synchronized void handleDisconnectOrResign(ClientHandler player, String reason) {
         if (!gameStarted) return;
         int[] colors = playerColors.get(player);
@@ -385,6 +418,8 @@ public class GameRoom {
                     remainingTime.put(currentTurnColor, time);
 
                     if (time <= 0) {
+                        // (기권) 타임아웃 시 isTimedOut 설정 및 메시지 브로드캐스트
+                        isTimedOut.put(currentTurnColor, true);
                         broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
                         handlePassTurn(null);
@@ -423,6 +458,7 @@ public class GameRoom {
         int[] colors = playerColors.get(player);
         if (colors == null) return true;
         // (3번) 수정: isTimedOut.getOrDefault 사용
+        // (기권) 1v1 시, 한 색만 타임아웃되어도 타임아웃으로 간주
         for (int c : colors) {
             if (isTimedOut.getOrDefault(c, false)) return true;
         }
@@ -450,7 +486,7 @@ public class GameRoom {
             for (ClientHandler player : playerColors.keySet()) {
 
                 // (3번) 이미 나간 유저(isTimedOut)라도 점수 계산은 해야 함
-                // (3번) 단, isPlayerTimedOut은 점수 계산 시점에 나갔는지(true) 아닌지(false)만 알려줌
+                // (3V) 단, isPlayerTimedOut은 점수 계산 시점에 나갔는지(true) 아닌지(false)만 알려줌
                 // (3번) -> isTimedOut(c)를 직접 확인해야 함
 
                 int score = 0;
@@ -465,8 +501,15 @@ public class GameRoom {
                         // (3번) 기권/타임아웃된 색상의 블록은 점수 계산에 포함
                         // (3번) (기권 시점의 점수가 확정되어야 하므로)
                         // (3번) -> 이 로직은 유지
-                        if (!isTimedOut.getOrDefault(piece.getColor(), false)) {
+                        // (기권) 1v1 (2색) 점수 계산 수정
+                        if (playerCountOnStart == 2) {
+                            // 1v1에서는 isTimedOut된 색상의 조각도 점수에 포함
                             score += piece.getSize();
+                        } else {
+                            // 4인전에서는 isTimedOut되지 않은 색상만 계산 (기존 로직)
+                            if (!isTimedOut.getOrDefault(piece.getColor(), false)) {
+                                score += piece.getSize();
+                            }
                         }
                     }
                 }

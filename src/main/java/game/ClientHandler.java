@@ -86,6 +86,13 @@ public class ClientHandler extends Thread {
                 case Protocol.C2S_PASS_TURN:
                     handlePassTurn();
                     break;
+
+                // (기권) C2S_RESIGN_COLOR 처리
+                case Protocol.C2S_RESIGN_COLOR:
+                    if (currentRoom != null) {
+                        currentRoom.handleResignColor(this, data);
+                    }
+                    break;
                 case Protocol.C2S_CHAT:
                     handleChat(data);
                     break;

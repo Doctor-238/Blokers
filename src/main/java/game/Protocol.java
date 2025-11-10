@@ -20,6 +20,9 @@ public class Protocol {
     public static final String C2S_CHAT = "CHAT";
     public static final String C2S_GET_LEADERBOARD = "GET_LEADERBOARD"; // (1번) 추가
 
+    // (기권) C2S_RESIGN -> C2S_RESIGN_COLOR (어떤 색상을 기권하는지 명시)
+    public static final String C2S_RESIGN_COLOR = "RESIGN_COLOR";
+
     // S2C: 서버 -> 클라이언트 (명령어 끝에 : 제거)
     public static final String S2C_LOGIN_SUCCESS = "LOGIN_SUCCESS";
     public static final String S2C_LOGIN_FAIL = "LOGIN_FAIL";
