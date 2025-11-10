@@ -60,11 +60,14 @@ public class GameRoom {
         players.remove(player);
         player.setCurrentRoom(null);
 
-        if (gameStarted) {
-            if (players.size() < 2) {
-                handleGameOver(true);
-            }
-        }
+        // --- (3번) 수정 ---
+        // 기권/접속종료 시 게임을 강제로 끝내지 않습니다.
+        // if (gameStarted) {
+        //    if (players.size() < 2) {
+        //        handleGameOver(true);
+        //    }
+        // }
+        // ------------------
 
         if (players.isEmpty()) {
             return true;
@@ -156,11 +159,19 @@ public class GameRoom {
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
         ClientHandler turnPlayer;
         if (playerCountOnStart == 4) {
-            turnPlayer = players.get(currentPlayerTurnIndex);
+            // (3번) 기권한 플레이어는 players 리스트에서 제거되므로, 이 로직은 턴 계산에 실패할 수 있음.
+            // (3번) 하지만 어차피 isTimedOut 플래그로 턴이 넘어가므로,
+            // (3번) turnPlayer가 실제 player와 일치하는지만 확인하면 됨.
+            // (3번) -> 이 로직을 쓰지 말고, 색상으로 플레이어를 찾아야 함.
+
+            // (3번) 수정: players 리스트 대신 playerHands 맵에서 현재 턴 색상의 소유자를 찾음
+            turnPlayer = getPlayerByColor(currentTurnColor);
+
         } else { // 1v1
-            turnPlayer = players.get(currentPlayerTurnIndex % 2);
+            turnPlayer = getPlayerByColor(currentTurnColor);
         }
-        if (!turnPlayer.equals(player)) {
+
+        if (turnPlayer == null || !turnPlayer.equals(player)) {
             player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
             return;
         }
@@ -213,12 +224,25 @@ public class GameRoom {
         advanceTurn();
     }
 
+    // (3번) handlePlaceBlock을 위한 헬퍼 메서드
+    private ClientHandler getPlayerByColor(int color) {
+        for (ClientHandler player : playerColors.keySet()) {
+            for (int c : playerColors.get(player)) {
+                if (c == color) {
+                    return player;
+                }
+            }
+        }
+        return null;
+    }
+
+
     public synchronized void handlePassTurn(ClientHandler player) {
         if (player != null) {
-            ClientHandler turnPlayer = (playerCountOnStart == 4)
-                    ? players.get(currentPlayerTurnIndex)
-                    : players.get(currentPlayerTurnIndex % 2);
-            if (!turnPlayer.equals(player)) {
+            // (3번) 수정: 턴 플레이어 확인 로직 변경
+            ClientHandler turnPlayer = getPlayerByColor(currentTurnColor);
+
+            if (turnPlayer == null || !turnPlayer.equals(player)) {
                 player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
                 return;
             }
@@ -239,16 +263,21 @@ public class GameRoom {
             for (int c : colors) {
                 if (!isTimedOut.get(c)) {
                     isTimedOut.put(c, true);
-                    broadcastMessage(ProtocolExt.S2C_COLOR_ELIMINATED + ":" + c + "|" + reason);
+                    broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " 색이 탈락했습니다 (" + reason + ")");
                 }
             }
         }
-        if (players.contains(player)) {
-            removePlayer(player);
+
+        // (3번) 수정: 플레이어가 나갔을 때, 턴이 그 플레이어에게 멈추는 것을 방지
+        ClientHandler currentTurnPlayer = getPlayerByColor(currentTurnColor);
+        if (player.equals(currentTurnPlayer)) {
+            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 턴을 포기했습니다. 턴이 넘어갑니다.");
+            handlePassTurn(null); // (3번) 강제로 턴을 넘김
         }
-        if (players.size() < 2 && gameStarted) {
-            handleGameOver(true);
-        }
+
+        // (3번) removePlayer(player)는 BlokusServer.onClientDisconnect에서 호출됨
+        // (3번) 여기서는 호출하지 않음 (이 메서드는 BlokusServer에서 호출되기 때문)
+        // (3번) players.size() < 2 체크는 removePlayer에서 이미 제거됨.
     }
 
     private boolean isValidMove(BlokusPiece piece, int x, int y, int color) {
@@ -322,8 +351,10 @@ public class GameRoom {
             currentPlayerTurnIndex = (currentPlayerTurnIndex + 1) % 4;
             currentTurnColor = currentPlayerTurnIndex + 1;
             attempts++;
-            if (attempts > 4) {
-                handleGameOver(false);
+            if (attempts > 4) { // (3번) 모든 색이 isTimedOut이면 무한 루프 방지
+                if (!checkGameOver()) { // (3번) 추가: 혹시 모르니 게임오버 체크
+                    handleGameOver(false);
+                }
                 return;
             }
         } while (isTimedOut.get(currentTurnColor));
@@ -335,7 +366,7 @@ public class GameRoom {
 
         String colorName = getColorName(currentTurnColor);
         String playerName = getPlayerNameByColor(currentTurnColor);
-        broadcastMessage(ProtocolExt.S2C_TURN_CHANGED + ":" + currentTurnColor + "|" + playerName);
+        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":턴 변경 → " + colorName + " (" + playerName + ")");
         broadcastGameState();
         broadcastTimeUpdate();
     }
@@ -375,14 +406,7 @@ public class GameRoom {
                 remainingTime.get(3),
                 remainingTime.get(4));
 
-        StringBuilder ext = new StringBuilder(ProtocolExt.S2C_TIME_UPDATE2).append(":");
-        ext.append("RED=").append(remainingTime.get(1)).append(";");
-        ext.append("BLUE=").append(remainingTime.get(2)).append(";");
-        ext.append("YELLOW=").append(remainingTime.get(3)).append(";");
-        ext.append("GREEN=").append(remainingTime.get(4));
-
         broadcastMessage(legacy);
-        broadcastMessage(ext.toString());
     }
 
     private boolean checkGameOver() {
@@ -395,6 +419,16 @@ public class GameRoom {
         return false;
     }
 
+    private boolean isPlayerTimedOut(ClientHandler player) {
+        int[] colors = playerColors.get(player);
+        if (colors == null) return true;
+        // (3번) 수정: isTimedOut.getOrDefault 사용
+        for (int c : colors) {
+            if (isTimedOut.getOrDefault(c, false)) return true;
+        }
+        return false;
+    }
+
     private void handleGameOver(boolean forced) {
         if (!gameStarted) return;
         gameStarted = false;
@@ -403,44 +437,100 @@ public class GameRoom {
         if (gameTimer != null) gameTimer.cancel();
 
         String resultMessage;
+        Map<String, Double> scoreChanges = new HashMap<>();
+
         if (forced) {
+            // (3번) 이 로직은 이제 removePlayer에서 호출되지 않음.
             resultMessage = "WINNER:" + (players.isEmpty() ? "NONE" : players.get(0).getUsername()) + " (강제승)";
         } else {
             Map<ClientHandler, Integer> scores = new HashMap<>();
 
-            for (ClientHandler player : playerHands.keySet()) {
+            // (3번) playerHands 맵에는 기권한 유저가 남아있을 수 있음.
+            // (3번) playerColors 맵을 기준으로 점수 계산
+            for (ClientHandler player : playerColors.keySet()) {
+
+                // (3번) 이미 나간 유저(isTimedOut)라도 점수 계산은 해야 함
+                // (3번) 단, isPlayerTimedOut은 점수 계산 시점에 나갔는지(true) 아닌지(false)만 알려줌
+                // (3번) -> isTimedOut(c)를 직접 확인해야 함
+
                 int score = 0;
                 List<BlokusPiece> hand = playerHands.get(player);
-                if (hand.isEmpty()) {
-                    score = -15;
+
+                if (hand == null) { // (3번) Disconnect 등으로 hand가 없는 경우
+                    score = 999; // (3번) 기권자는 최고 벌점
+                } else if (hand.isEmpty()) {
+                    score = -15; // 보너스
                 } else {
                     for (BlokusPiece piece : hand) {
-                        if (!isTimedOut.get(piece.getColor())) {
+                        // (3번) 기권/타임아웃된 색상의 블록은 점수 계산에 포함
+                        // (3번) (기권 시점의 점수가 확정되어야 하므로)
+                        // (3번) -> 이 로직은 유지
+                        if (!isTimedOut.getOrDefault(piece.getColor(), false)) {
                             score += piece.getSize();
                         }
                     }
                 }
+
+                // (3번) 기권/타임아웃으로 isTimedOut 플래그가 하나라도 켜진 유저는
+                // (3번) 남은 블록 수와 관계없이 최고 벌점을 부여 (단, 1v1 제외)
+                if (playerCountOnStart == 4 && isPlayerTimedOut(player)) {
+                    score = 999;
+                }
+
                 scores.put(player, score);
             }
 
-            if (playerCountOnStart == 2 && players.size() >= 2) {
-                ClientHandler p1 = players.get(0);
-                ClientHandler p2 = players.get(1);
-                int scoreP1 = scores.getOrDefault(p1, 0);
-                int scoreP2 = scores.getOrDefault(p2, 0);
-                if (scoreP1 < scoreP2) resultMessage = "WINNER:" + p1.getUsername() + " (점수: " + scoreP1 + " vs " + scoreP2 + ")";
-                else if (scoreP2 < scoreP1) resultMessage = "WINNER:" + p2.getUsername() + " (점수: " + scoreP2 + " vs " + scoreP1 + ")";
-                else resultMessage = "DRAW (점수: " + scoreP1 + ")";
+            if (playerCountOnStart == 2) {
+                // (3번) 1v1은 players 리스트가 아닌, playerColors 맵을 기준으로
+                List<ClientHandler> pList = new ArrayList<>(playerColors.keySet());
+                ClientHandler p1 = pList.get(0);
+                ClientHandler p2 = pList.get(1);
+
+                int scoreP1 = scores.getOrDefault(p1, 999);
+                int scoreP2 = scores.getOrDefault(p2, 999);
+
+                ClientHandler winner, loser;
+                if (scoreP1 < scoreP2) { winner = p1; loser = p2; }
+                else if (scoreP2 < scoreP1) { winner = p2; loser = p1; }
+                else { winner = null; loser = null; }
+
+                if (winner != null) {
+                    scoreChanges.put(winner.getUsername(), 1.5);
+                    scoreChanges.put(loser.getUsername(), -0.5);
+                    resultMessage = "WINNER:" + winner.getUsername() + " (점수: " + scoreP1 + " vs " + scoreP2 + ")";
+                } else {
+                    scoreChanges.put(p1.getUsername(), 0.0);
+                    scoreChanges.put(p2.getUsername(), 0.0);
+                    resultMessage = "DRAW (점수: " + scoreP1 + ")";
+                }
+
             } else {
+                // (3번) 4인 랭킹 점수
                 List<Map.Entry<ClientHandler, Integer>> sorted = new ArrayList<>(scores.entrySet());
                 sorted.sort(Comparator.comparingInt(Map.Entry::getValue));
+
+                double[] points = {2.0, 1.0, 0.0, -1.0};
                 StringBuilder rankStr = new StringBuilder();
+
                 for (int i = 0; i < sorted.size(); i++) {
                     ClientHandler p = sorted.get(i).getKey();
                     int s = sorted.get(i).getValue();
-                    rankStr.append((i + 1)).append("등: ").append(p.getUsername()).append(" (").append(s).append("점) | ");
+                    double pointChange = (i < points.length) ? points[i] : -1.0;
+
+                    // (3번) 기권자(999점)는 무조건 -1점
+                    if (s == 999) pointChange = -1.0;
+
+                    scoreChanges.put(p.getUsername(), pointChange);
+
+                    rankStr.append((i + 1)).append("등: ").append(p.getUsername()).append(" (")
+                            .append(s == 999 ? "기권" : s).append("점 / ").append(pointChange > 0 ? "+" : "")
+                            .append(pointChange).append("점) | ");
                 }
                 resultMessage = rankStr.toString();
+            }
+
+            if (!scoreChanges.isEmpty()) {
+                server.recordGameResult(scoreChanges);
             }
         }
 
@@ -473,11 +563,20 @@ public class GameRoom {
     }
 
     private String getPlayerNameByColor(int color) {
-        if (playerCountOnStart == 4) {
-            return players.size() >= color ? players.get(color - 1).getUsername() : "X";
-        } else {
-            return players.get((color - 1) % 2).getUsername();
+        // (3번) 수정: 기권한 유저도 이름을 표시해야 하므로, playerColors 맵에서 찾음
+        ClientHandler player = getPlayerByColor(color);
+        if (player != null) {
+            return player.getUsername();
         }
+
+        // (3번) 1v1 로직 (getPlayerByColor로 대체 가능해 보임)
+        // if (playerCountOnStart == 4) {
+        //    return players.size() >= color ? players.get(color - 1).getUsername() : "X";
+        // } else {
+        //    return players.get((color - 1) % 2).getUsername();
+        // }
+
+        return "X"; // (3번) 해당 색상의 플레이어를 못 찾음
     }
 
     private String getColorName(int color) {

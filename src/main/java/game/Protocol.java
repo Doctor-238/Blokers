@@ -18,6 +18,7 @@ public class Protocol {
     public static final String C2S_PLACE_BLOCK = "PLACE";
     public static final String C2S_PASS_TURN = "PASS_TURN";
     public static final String C2S_CHAT = "CHAT";
+    public static final String C2S_GET_LEADERBOARD = "GET_LEADERBOARD"; // (1번) 추가
 
     // S2C: 서버 -> 클라이언트 (명령어 끝에 : 제거)
     public static final String S2C_LOGIN_SUCCESS = "LOGIN_SUCCESS";
@@ -35,6 +36,8 @@ public class Protocol {
     public static final String S2C_GAME_OVER = "GAME_OVER";
     public static final String S2C_CHAT = "CHAT";
     public static final String S2C_SYSTEM_MSG = "SYSTEM_MSG";
+    public static final String S2C_LEADERBOARD_DATA = "LEADERBOARD_DATA"; // (1번) 추가
+
 
     // 시간제한 프로토콜
     public static final String S2C_TIME_UPDATE = "TIME_UPDATE"; // TIME_UPDATE:<r_sec>,<b_sec>,<y_sec>,<g_sec>
