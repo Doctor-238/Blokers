@@ -17,9 +17,22 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
+// 자동 스캔을 위해 추가된 import
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class BlokusClient extends JFrame {
 
-    private String serverHost = "localhost";
+    private String serverHost = "127.0.0.1"; // 스캔 성공 시 이 값이 덮어써짐
     private int serverPort = 12345;
 
     private Socket socket;
@@ -37,6 +50,13 @@ public class BlokusClient extends JFrame {
     private GameScreen gameScreen;
 
     private boolean handlingLoginFail = false;
+
+    // --- (자동 스캔 관련) 스캐너 설정 ---
+    private final int SCAN_THREADS = 50; // 동시에 스캔할 스레드 수
+    private final int SCAN_TIMEOUT = 100; // 각 IP당 타임아웃 (ms)
+    private final int TOTAL_TIMEOUT = 10; // 전체 스캔 타임아웃 (초)
+    // ------------------------------------
+
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -82,27 +102,171 @@ public class BlokusClient extends JFrame {
         if (socket != null) try { socket.close(); } catch (IOException e) {}
     }
 
+    /**
+     * (수정) 로그인 시도 (서버 자동 스캔 기능 포함)
+     */
     public void attemptLogin(String username) {
         if (username.trim().isEmpty()) {
             JOptionPane.showMessageDialog(this, "이름을 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
-        try {
-            connect();
-            sendMessage(Protocol.C2S_LOGIN + ":" + username);
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
-        }
+
+        // 1. 로그인 UI 비활성화 및 상태 메시지 표시
+        loginScreen.setLoginControlsEnabled(false, "로컬 서버 찾는 중...");
+
+        // 2. SwingWorker를 사용하여 백그라운드에서 서버 스캔 및 연결 시도
+        SwingWorker<String, String> loginWorker = new SwingWorker<>() {
+
+            @Override
+            protected String doInBackground() throws Exception {
+                // 2-1. 네트워크 스캔
+                String foundIp = scanNetworkForServer();
+
+                if (foundIp == null) {
+                    // (스캔 실패) 127.0.0.1 (localhost)로 마지막 시도
+                    publish("서버를 못찾음. localhost로 접속 시도...");
+                    foundIp = "127.0.0.1";
+                }
+
+                // 2-2. 서버 IP 설정
+                serverHost = foundIp;
+                publish(foundIp + " 서버에 연결 시도 중...");
+
+                // 2-3. 연결 시도
+                try {
+                    connect(); // (수정) connect()는 이제 serverHost 변수를 사용
+                    sendMessage(Protocol.C2S_LOGIN + ":" + username);
+                    return "LOGIN_ATTEMPTED"; // 성공 여부는 S2C 메시지가 처리
+                } catch (IOException e) {
+                    return "CONNECT_FAILED:" + e.getMessage(); // 연결 자체 실패
+                }
+            }
+
+            @Override
+            protected void process(java.util.List<String> chunks) {
+                // doInBackground에서 publish()로 보낸 메시지 처리
+                loginScreen.statusLabel.setText(chunks.get(chunks.size() - 1));
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String result = get();
+
+                    if (result.startsWith("CONNECT_FAILED")) {
+                        String errorMsg = result.split(":", 2)[1];
+                        JOptionPane.showMessageDialog(BlokusClient.this, "서버 연결 실패: " + errorMsg, "연결 오류", JOptionPane.ERROR_MESSAGE);
+                        loginScreen.setLoginControlsEnabled(true, " "); // UI 다시 활성화
+                    }
+                    // "LOGIN_ATTEMPTED"인 경우:
+                    // S2C_LOGIN_SUCCESS 또는 S2C_LOGIN_FAIL 메시지가
+                    // ClientReceiver 스레드에서 처리될 것임.
+                    // 만약 S2C_LOGIN_FAIL이 오면, handleServerMessage가 UI를 활성화함.
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    JOptionPane.showMessageDialog(BlokusClient.this, "로그인 중 알 수 없는 오류: " + e.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
+                    loginScreen.setLoginControlsEnabled(true, " "); // UI 다시 활성화
+                }
+            }
+        };
+
+        loginWorker.execute();
     }
 
+    /**
+     * (수정) attemptLogin에서 설정된 serverHost 변수를 사용하여 연결
+     */
     private void connect() throws IOException {
         cleanupConnection();
+        // this.serverHost는 attemptLogin의 SwingWorker에서 설정된 값을 사용
         socket = new Socket(serverHost, serverPort);
         out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
         in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         receiver = new ClientReceiver(in, this);
         receiver.start();
     }
+
+    // --- (추가) 서버 스캔 로직 ---
+
+    /**
+     * 로컬 네트워크(같은 Wi-Fi)에서 서버를 스캔합니다.
+     * @return 발견된 서버 IP (String) 또는 null
+     */
+    private String scanNetworkForServer() {
+        String ipBase = getLocalIpBase();
+        if (ipBase == null) {
+            System.err.println("로컬 IP 주소(192.168.x.x 등)를 찾을 수 없습니다.");
+            return null; // 스캔 불가
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(SCAN_THREADS);
+        AtomicReference<String> foundHost = new AtomicReference<>(null);
+
+        System.out.println("Scanning IP range: " + ipBase + "1-254");
+
+        for (int i = 1; i <= 254; i++) {
+            final String host = ipBase + i;
+            executor.submit(() -> {
+                if (foundHost.get() != null) {
+                    return; // 이미 다른 스레드가 찾음
+                }
+                try (Socket s = new Socket()) {
+                    s.connect(new InetSocketAddress(host, serverPort), SCAN_TIMEOUT);
+                    // 연결 성공!
+                    if (foundHost.compareAndSet(null, host)) {
+                        System.out.println("서버 발견: " + host);
+                        executor.shutdownNow(); // 다른 모든 스캔 작업 즉시 중지
+                    }
+                } catch (IOException e) {
+                    // 연결 실패 (타임아웃 또는 거부) - 정상
+                }
+            });
+        }
+
+        executor.shutdown();
+        try {
+            // 모든 작업이 끝나거나, shutdownNow()가 호출되거나, 타임아웃될 때까지 대기
+            if (!executor.awaitTermination(TOTAL_TIMEOUT, TimeUnit.SECONDS)) {
+                executor.shutdownNow(); // 타임아웃 발생 시 강제 종료
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+        }
+
+        return foundHost.get();
+    }
+
+    /**
+     * 로컬 IP 주소의 앞 3자리 (예: "192.168.0.")를 찾습니다.
+     * @return "192.168.x." 형태의 IP 접두사 또는 null
+     */
+    private String getLocalIpBase() {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface ni : Collections.list(interfaces)) {
+                if (ni.isLoopback() || !ni.isUp() || ni.isVirtual()) {
+                    continue;
+                }
+                Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                for (InetAddress addr : Collections.list(addresses)) {
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        String ip = addr.getHostAddress();
+                        // 핫스팟 (예: 192.168.43.x) 또는 일반 공유기 (예: 192.168.0.x 등)
+                        if (ip.startsWith("192.168.") || ip.startsWith("172.") || ip.startsWith("10.")) {
+                            return ip.substring(0, ip.lastIndexOf('.') + 1);
+                        }
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            e.printStackTrace();
+        }
+        return null; // 못 찾음
+    }
+
+    // ----------------------------
+
 
     public void handleConnectionLost() {
         if (handlingLoginFail) {
@@ -114,6 +278,11 @@ public class BlokusClient extends JFrame {
         cleanupConnection();
         this.username = null;
         cardLayout.show(mainPanel, "LOGIN");
+
+        // (수정) 연결 끊김 시 로그인 UI 다시 활성화
+        if (loginScreen != null) {
+            loginScreen.setLoginControlsEnabled(true, "서버 연결 끊김.");
+        }
     }
 
     public void handleServerMessage(String message) {
@@ -129,10 +298,14 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_LOGIN_SUCCESS:
                         username = loginScreen.getUsername();
                         cardLayout.show(mainPanel, "LOBBY");
+                        // (수정) 로그인 성공 시 UI 활성화 (다음 접속을 위해)
+                        loginScreen.setLoginControlsEnabled(true, " ");
                         break;
                     case Protocol.S2C_LOGIN_FAIL:
                         handlingLoginFail = true;
                         JOptionPane.showMessageDialog(BlokusClient.this, "로그인 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
+                        // (수정) 로그인 실패 시 UI 다시 활성화
+                        loginScreen.setLoginControlsEnabled(true, "로그인 실패.");
                         break;
 
                     case Protocol.S2C_LEADERBOARD_DATA:
@@ -238,33 +411,82 @@ class ClientReceiver extends Thread {
     }
 }
 
+/**
+ * (수정) LoginScreen (UI 원래대로 복귀 + 상태 표시 기능)
+ */
 class LoginScreen extends JPanel {
     private final BlokusClient client;
-    private final JTextField usernameField;
+
+    // (수정) UI 컨트롤을 BlokusClient에서 제어할 수 있도록 참조 저장
+    final JTextField usernameField;
+    final JButton loginButton;
+    final JLabel statusLabel;
 
     public LoginScreen(BlokusClient client) {
         this.client = client;
-        setLayout(new FlowLayout());
-        add(new JLabel("이름:"));
-        usernameField = new JTextField(12);
-        add(usernameField);
 
-        JButton loginButton = new JButton("접속");
+        // (수정) 레이아웃 변경 (GridBagLayout 사용)
+        setLayout(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        // 1행: 이름
+        gbc.gridx = 0; gbc.gridy = 0;
+        add(new JLabel("이름:"), gbc);
+
+        gbc.gridx = 1; gbc.gridy = 0;
+        usernameField = new JTextField(15);
+        add(usernameField, gbc);
+
+        // 2행: 접속 버튼
+        gbc.gridx = 0; gbc.gridy = 1;
+        gbc.gridwidth = 2; // 2칸 병합
+        loginButton = new JButton("접속");
+        add(loginButton, gbc);
+
+        // 3행: 상태 라벨 (평소엔 비어있음)
+        gbc.gridx = 0; gbc.gridy = 2;
+        gbc.gridwidth = 2; // 2칸 병합
+        statusLabel = new JLabel(" ");
+        statusLabel.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
+        statusLabel.setForeground(Color.GRAY);
+        statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        add(statusLabel, gbc);
+
+        // (수정) 로그인 버튼 리스너 (이름만 전달)
         loginButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 client.attemptLogin(usernameField.getText());
             }
         });
-        add(loginButton);
+
+        // 이름 필드에서 Enter 키로 로그인
+        usernameField.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                client.attemptLogin(usernameField.getText());
+            }
+        });
     }
 
     public String getUsername() {
         return usernameField.getText();
     }
+
+    /**
+     * (추가) 로그인 버튼과 이름 필드를 활성화/비활성화하고 상태 메시지를 설정합니다.
+     */
+    public void setLoginControlsEnabled(boolean enabled, String status) {
+        this.usernameField.setEnabled(enabled);
+        this.loginButton.setEnabled(enabled);
+        this.statusLabel.setText(status);
+    }
 }
 
 class LobbyScreen extends JPanel {
+    // ... (이하 코드는 수정 없음) ...
     private final BlokusClient client;
     private final CardLayout cardLayout;
 
@@ -471,6 +693,7 @@ class LobbyScreen extends JPanel {
 }
 
 class RoomScreen extends JPanel {
+    // ... (이하 코드는 수정 없음) ...
     private final BlokusClient client;
     private final JLabel roomNameLabel;
     private final JList<String> playerList;
@@ -687,6 +910,7 @@ class RoomScreen extends JPanel {
 }
 
 class WrapLayout extends FlowLayout {
+    // ... (이하 코드는 수정 없음) ...
     public WrapLayout() { super(); }
     public WrapLayout(int align) { super(align); }
     public WrapLayout(int align, int hgap, int vgap) { super(align, hgap, vgap); }
