@@ -1,15 +1,13 @@
 package game;
 
 import java.awt.*;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 블로커스 조각(Piece) 정의 (회전 기능 유지)
- */
-public class BlokusPiece {
+public class BlokusPiece implements Serializable {
 
     public static final String[] ALL_PIECE_IDS = {
             "I1", "I2", "I3", "I4", "I5",

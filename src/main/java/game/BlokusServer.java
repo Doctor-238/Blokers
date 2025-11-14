@@ -1,17 +1,20 @@
 package game;
 
-import game.auth.AuthManager;
-
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 블로커스 게임 서버 메인 클래스.
- * (회원가입/로그인2/밴/유저목록 기능 추가)
- */
 public class BlokusServer {
     private static final int PORT = 12345;
 
@@ -19,17 +22,16 @@ public class BlokusServer {
     private ConcurrentHashMap<String, ClientHandler> lobbyClients = new ConcurrentHashMap<>();
     private AtomicInteger roomIdCounter = new AtomicInteger(0);
 
-    // 인증/밴 관리자
-    private final AuthManager authManager = new AuthManager();
-
-    // 간단 관리자 개념: 첫 번째 가입자(또는 첫 로그인 사용자)
-    private volatile String adminUsername = null;
+    private ConcurrentHashMap<String, Double> playerScores = new ConcurrentHashMap<>();
+    private static final String SCORES_FILE = "blokus_scores.properties";
 
     public static void main(String[] args) {
+        System.setProperty("file.encoding", "UTF-8");
         new BlokusServer().startServer();
     }
 
     public void startServer() {
+        loadScores();
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("블로커스 서버 시작. 포트: " + PORT);
 
@@ -44,9 +46,67 @@ public class BlokusServer {
         }
     }
 
-    // Username 중복 (로비 + 게임방)
+    private void loadScores() {
+        Properties props = new Properties();
+        try (InputStream input = new FileInputStream(SCORES_FILE)) {
+            props.load(input);
+            for (String username : props.stringPropertyNames()) {
+                playerScores.put(username, Double.parseDouble(props.getProperty(username)));
+            }
+            System.out.println("스코어 로드 완료: " + SCORES_FILE);
+        } catch (FileNotFoundException e) {
+            System.out.println("스코어 파일 없음. 새로 생성합니다.");
+        } catch (IOException | NumberFormatException e) {
+            System.err.println("스코어 로드 중 오류 발생: " + e.getMessage());
+        }
+    }
+
+    private synchronized void saveScores() {
+        Properties props = new Properties();
+        for (Map.Entry<String, Double> entry : playerScores.entrySet()) {
+            props.setProperty(entry.getKey(), String.valueOf(entry.getValue()));
+        }
+        try (OutputStream output = new FileOutputStream(SCORES_FILE)) {
+            props.store(output, "Blokus Player Scores");
+            System.out.println("스코어 저장 완료: " + SCORES_FILE);
+        } catch (IOException e) {
+            System.err.println("스코어 저장 중 오류 발생: " + e.getMessage());
+        }
+    }
+
+    public synchronized void recordGameResult(Map<String, Double> scoreChanges) {
+        for (Map.Entry<String, Double> entry : scoreChanges.entrySet()) {
+            String username = entry.getKey();
+            double change = entry.getValue();
+            double currentScore = playerScores.getOrDefault(username, 0.0);
+            playerScores.put(username, currentScore + change);
+        }
+        saveScores();
+    }
+
+    public void sendLeaderboard(ClientHandler client) {
+        if (playerScores.isEmpty()) {
+            client.sendMessage(Protocol.S2C_LEADERBOARD_DATA);
+            return;
+        }
+        List<Map.Entry<String, Double>> sortedScores = new ArrayList<>(playerScores.entrySet());
+        sortedScores.sort(Map.Entry.<String, Double>comparingByValue().reversed());
+
+        StringBuilder leaderboardData = new StringBuilder(Protocol.S2C_LEADERBOARD_DATA + ":");
+        for (Map.Entry<String, Double> entry : sortedScores) {
+            leaderboardData.append(entry.getKey()).append("/").append(entry.getValue()).append(";");
+        }
+        leaderboardData.deleteCharAt(leaderboardData.length() - 1);
+        client.sendMessage(leaderboardData.toString());
+    }
+
+
     public synchronized boolean isUsernameTakenAnywhere(String username) {
-        if (lobbyClients.containsKey(username)) return true;
+        for (String lobbyUsername : lobbyClients.keySet()) {
+            if (lobbyUsername.equalsIgnoreCase(username)) {
+                return true;
+            }
+        }
         for (GameRoom room : gameRooms.values()) {
             if (room.isPlayerInRoom(username)) return true;
         }
@@ -64,11 +124,7 @@ public class BlokusServer {
 
     public void addClientToLobby(ClientHandler client) {
         lobbyClients.put(client.getUsername(), client);
-        broadcastRoomListToLobby();
-        // 관리자 알림
-        if (adminUsername != null && adminUsername.equals(client.getUsername())) {
-            client.sendMessage(ProtocolExt.S2C_YOU_ARE_ADMIN);
-        }
+        sendLeaderboard(client);
     }
 
     public void removeClientFromLobby(ClientHandler client) {
@@ -86,7 +142,6 @@ public class BlokusServer {
         newRoom.addPlayer(host);
 
         System.out.println("방 생성됨: " + roomName + " (ID: " + roomId + ") by " + host.getUsername());
-        broadcastRoomListToLobby();
         return newRoom;
     }
 
@@ -96,10 +151,9 @@ public class BlokusServer {
             removeClientFromLobby(player);
             room.addPlayer(player);
             System.out.println(player.getUsername() + "가 방 " + roomId + "에 참여.");
-            broadcastRoomListToLobby();
             return room;
         }
-        return null; // 실패
+        return null;
     }
 
     public void leaveRoom(GameRoom room, ClientHandler player) {
@@ -113,7 +167,6 @@ public class BlokusServer {
         }
 
         addClientToLobby(player);
-        broadcastRoomListToLobby();
     }
 
     public void removeRoom(int roomId) {
@@ -125,10 +178,9 @@ public class BlokusServer {
                 addClientToLobby(player);
             }
         }
-        broadcastRoomListToLobby();
     }
 
-    public void broadcastRoomListToLobby() {
+    public void sendRoomList(ClientHandler client) {
         StringBuilder roomListStr = new StringBuilder(Protocol.S2C_ROOM_LIST);
         boolean hasData = false;
         for (GameRoom room : gameRooms.values()) {
@@ -144,8 +196,42 @@ public class BlokusServer {
         if (hasData) {
             roomListStr.deleteCharAt(roomListStr.length() - 1);
         }
+        client.sendMessage(roomListStr.toString());
+    }
+
+    public synchronized void sendWhisper(ClientHandler from, String targetUsername, String message) {
+        ClientHandler target = null;
+
         for (ClientHandler client : lobbyClients.values()) {
-            client.sendMessage(roomListStr.toString());
+            if (client.getUsername().equalsIgnoreCase(targetUsername)) {
+                target = client;
+                break;
+            }
+        }
+
+        if (target == null) {
+            for (GameRoom room : gameRooms.values()) {
+                List<ClientHandler> roomPlayers = room.getPlayers();
+                synchronized (roomPlayers) {
+                    for (ClientHandler client : roomPlayers) {
+                        if (client.getUsername().equalsIgnoreCase(targetUsername)) {
+                            target = client;
+                            break;
+                        }
+                    }
+                }
+                if (target != null) break;
+            }
+        }
+
+        if (target != null) {
+            String whisperMsg = String.format("[귓속말 from %s]:%s", from.getUsername(), message);
+            target.sendMessage(Protocol.S2C_WHISPER + ":" + whisperMsg);
+
+            String echoMsg = String.format("[귓속말 to %s]:%s", target.getUsername(), message);
+            from.sendMessage(Protocol.S2C_WHISPER + ":" + echoMsg);
+        } else {
+            from.sendMessage(Protocol.S2C_SYSTEM_MSG + ":[" + targetUsername + "] 님을 찾을 수 없습니다.");
         }
     }
 
@@ -155,52 +241,11 @@ public class BlokusServer {
 
     public void onClientDisconnect(ClientHandler client) {
         if (client.getCurrentRoom() != null) {
-            // 게임 중이면 기권 처리 로직
             GameRoom room = client.getCurrentRoom();
             room.handleDisconnectOrResign(client, "disconnect");
             leaveRoom(room, client);
         }
         removeClientFromLobby(client);
         System.out.println(client.getUsername() + " 접속 종료.");
-    }
-
-    // --- Auth 관련 접근 ---
-
-    public AuthManager getAuthManager() {
-        return authManager;
-    }
-
-    public synchronized void ensureAdminAssigned(String username) {
-        if (adminUsername == null) {
-            adminUsername = username;
-            System.out.println("관리자 지정: " + adminUsername);
-        }
-    }
-
-    public boolean isAdmin(String username) {
-        return adminUsername != null && adminUsername.equals(username);
-    }
-
-    public void broadcastUserListTo(ClientHandler requester) {
-        // USER_LIST:[name,status];...
-        StringBuilder sb = new StringBuilder(ProtocolExt.S2C_USER_LIST).append(":");
-        // 로비 유저
-        for (String name : lobbyClients.keySet()) {
-            sb.append("[").append(name).append(",online];");
-        }
-        // 방/게임 유저
-        for (GameRoom room : gameRooms.values()) {
-            for (ClientHandler p : room.getPlayers()) {
-                String status = room.isGameStarted() ? "in_game" : "in_room";
-                sb.append("[").append(p.getUsername()).append(",").append(status).append("];");
-            }
-        }
-        // 밴 처리된(접속해 있지 않은) 계정도 표시
-        // (접속중인 경우 위에 포함)
-        // authManager는 전체 계정 목록을 안 들고 있으니 bannedUsers만 노출 (추가 확장 시 전체 user 목록 별도로 유지)
-        // 여기서는 bannedUsers 따로 알 수 없으므로 밴된 유저 온라인 중이면 상태는 그대로.
-        // 간단히: 요청자가 관리자라면 밴 상태 유저를 추가 나열하는 구조 필요 -> AuthManager에 전체 사용자 목록이 없으므로 생략.
-        if (sb.charAt(sb.length() - 1) == ';') sb.deleteCharAt(sb.length() - 1);
-        requester.sendMessage(sb.toString());
     }
 }

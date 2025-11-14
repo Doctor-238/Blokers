@@ -1,10 +1,11 @@
 package game;
 
 import java.awt.*;
+import java.io.Serializable;
 import java.util.*;
 import java.util.List;
 
-public class GameRoom {
+public class GameRoom implements Serializable {
     private int roomId;
     private String roomName;
     private ClientHandler host;
@@ -26,8 +27,8 @@ public class GameRoom {
 
     private static final int INITIAL_TIME_SECONDS = 300;
     private static final int TIME_BONUS_SECONDS = 20;
-    private Timer gameTimer;
-    private TimerTask currentTimerTask;
+    private transient Timer gameTimer;
+    private transient TimerTask currentTimerTask;
     private Map<Integer, Integer> remainingTime = Collections.synchronizedMap(new HashMap<>());
     private Map<Integer, Boolean> isTimedOut = Collections.synchronizedMap(new HashMap<>());
 
@@ -38,10 +39,12 @@ public class GameRoom {
         this.server = server;
     }
 
-    public synchronized boolean isPlayerInRoom(String username) {
-        for (ClientHandler player : players) {
-            if (player.getUsername().equalsIgnoreCase(username)) {
-                return true;
+    public boolean isPlayerInRoom(String username) {
+        synchronized (players) {
+            for (ClientHandler player : players) {
+                if (player.getUsername().equalsIgnoreCase(username)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -59,12 +62,6 @@ public class GameRoom {
         boolean wasHost = player.equals(host);
         players.remove(player);
         player.setCurrentRoom(null);
-
-        if (gameStarted) {
-            if (players.size() < 2) {
-                handleGameOver(true);
-            }
-        }
 
         if (players.isEmpty()) {
             return true;
@@ -156,11 +153,13 @@ public class GameRoom {
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
         ClientHandler turnPlayer;
         if (playerCountOnStart == 4) {
-            turnPlayer = players.get(currentPlayerTurnIndex);
-        } else { // 1v1
-            turnPlayer = players.get(currentPlayerTurnIndex % 2);
+            turnPlayer = getPlayerByColor(currentTurnColor);
+
+        } else {
+            turnPlayer = getPlayerByColor(currentTurnColor);
         }
-        if (!turnPlayer.equals(player)) {
+
+        if (turnPlayer == null || !turnPlayer.equals(player)) {
             player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
             return;
         }
@@ -213,12 +212,23 @@ public class GameRoom {
         advanceTurn();
     }
 
+    private ClientHandler getPlayerByColor(int color) {
+        for (ClientHandler player : playerColors.keySet()) {
+            for (int c : playerColors.get(player)) {
+                if (c == color) {
+                    return player;
+                }
+            }
+        }
+        return null;
+    }
+
+
     public synchronized void handlePassTurn(ClientHandler player) {
         if (player != null) {
-            ClientHandler turnPlayer = (playerCountOnStart == 4)
-                    ? players.get(currentPlayerTurnIndex)
-                    : players.get(currentPlayerTurnIndex % 2);
-            if (!turnPlayer.equals(player)) {
+            ClientHandler turnPlayer = getPlayerByColor(currentTurnColor);
+
+            if (turnPlayer == null || !turnPlayer.equals(player)) {
                 player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
                 return;
             }
@@ -232,6 +242,35 @@ public class GameRoom {
         }
     }
 
+    public synchronized void handleResignColor(ClientHandler player, String data) {
+        if (!gameStarted) return;
+
+        try {
+            int colorToResign = Integer.parseInt(data);
+
+            if (colorToResign != currentTurnColor) {
+                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":현재 턴의 색상만 기권할 수 있습니다.");
+                return;
+            }
+
+            ClientHandler turnPlayer = getPlayerByColor(currentTurnColor);
+            if (turnPlayer == null || !turnPlayer.equals(player)) {
+                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
+                return;
+            }
+
+            if (!isTimedOut.get(colorToResign)) {
+                isTimedOut.put(colorToResign, true);
+                broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색이 기권했습니다.");
+            }
+
+            handlePassTurn(null);
+
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid C2S_RESIGN_COLOR data: " + data);
+        }
+    }
+
     public synchronized void handleDisconnectOrResign(ClientHandler player, String reason) {
         if (!gameStarted) return;
         int[] colors = playerColors.get(player);
@@ -239,15 +278,15 @@ public class GameRoom {
             for (int c : colors) {
                 if (!isTimedOut.get(c)) {
                     isTimedOut.put(c, true);
-                    broadcastMessage(ProtocolExt.S2C_COLOR_ELIMINATED + ":" + c + "|" + reason);
+                    broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " 색이 탈락했습니다 (" + reason + ")");
                 }
             }
         }
-        if (players.contains(player)) {
-            removePlayer(player);
-        }
-        if (players.size() < 2 && gameStarted) {
-            handleGameOver(true);
+
+        ClientHandler currentTurnPlayer = getPlayerByColor(currentTurnColor);
+        if (player.equals(currentTurnPlayer)) {
+            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 턴을 포기했습니다. 턴이 넘어갑니다.");
+            handlePassTurn(null);
         }
     }
 
@@ -323,7 +362,9 @@ public class GameRoom {
             currentTurnColor = currentPlayerTurnIndex + 1;
             attempts++;
             if (attempts > 4) {
-                handleGameOver(false);
+                if (!checkGameOver()) {
+                    handleGameOver(false);
+                }
                 return;
             }
         } while (isTimedOut.get(currentTurnColor));
@@ -335,7 +376,7 @@ public class GameRoom {
 
         String colorName = getColorName(currentTurnColor);
         String playerName = getPlayerNameByColor(currentTurnColor);
-        broadcastMessage(ProtocolExt.S2C_TURN_CHANGED + ":" + currentTurnColor + "|" + playerName);
+        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":턴 변경 → " + colorName + " (" + playerName + ")");
         broadcastGameState();
         broadcastTimeUpdate();
     }
@@ -354,6 +395,7 @@ public class GameRoom {
                     remainingTime.put(currentTurnColor, time);
 
                     if (time <= 0) {
+                        isTimedOut.put(currentTurnColor, true);
                         broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
                         handlePassTurn(null);
@@ -364,6 +406,7 @@ public class GameRoom {
                 }
             }
         };
+        if (gameTimer == null) gameTimer = new Timer();
         gameTimer.scheduleAtFixedRate(currentTimerTask, 1000, 1000);
     }
 
@@ -375,14 +418,7 @@ public class GameRoom {
                 remainingTime.get(3),
                 remainingTime.get(4));
 
-        StringBuilder ext = new StringBuilder(ProtocolExt.S2C_TIME_UPDATE2).append(":");
-        ext.append("RED=").append(remainingTime.get(1)).append(";");
-        ext.append("BLUE=").append(remainingTime.get(2)).append(";");
-        ext.append("YELLOW=").append(remainingTime.get(3)).append(";");
-        ext.append("GREEN=").append(remainingTime.get(4));
-
         broadcastMessage(legacy);
-        broadcastMessage(ext.toString());
     }
 
     private boolean checkGameOver() {
@@ -395,6 +431,15 @@ public class GameRoom {
         return false;
     }
 
+    private boolean isPlayerTimedOut(ClientHandler player) {
+        int[] colors = playerColors.get(player);
+        if (colors == null) return true;
+        for (int c : colors) {
+            if (isTimedOut.getOrDefault(c, false)) return true;
+        }
+        return false;
+    }
+
     private void handleGameOver(boolean forced) {
         if (!gameStarted) return;
         gameStarted = false;
@@ -403,44 +448,89 @@ public class GameRoom {
         if (gameTimer != null) gameTimer.cancel();
 
         String resultMessage;
+        Map<String, Double> scoreChanges = new HashMap<>();
+
         if (forced) {
             resultMessage = "WINNER:" + (players.isEmpty() ? "NONE" : players.get(0).getUsername()) + " (강제승)";
         } else {
             Map<ClientHandler, Integer> scores = new HashMap<>();
 
-            for (ClientHandler player : playerHands.keySet()) {
+            for (ClientHandler player : playerColors.keySet()) {
+
                 int score = 0;
                 List<BlokusPiece> hand = playerHands.get(player);
-                if (hand.isEmpty()) {
+
+                if (hand == null) {
+                    score = 999;
+                } else if (hand.isEmpty()) {
                     score = -15;
                 } else {
                     for (BlokusPiece piece : hand) {
-                        if (!isTimedOut.get(piece.getColor())) {
+                        if (playerCountOnStart == 2) {
                             score += piece.getSize();
+                        } else {
+                            if (!isTimedOut.getOrDefault(piece.getColor(), false)) {
+                                score += piece.getSize();
+                            }
                         }
                     }
                 }
+
+                if (playerCountOnStart == 4 && isPlayerTimedOut(player)) {
+                    score = 999;
+                }
+
                 scores.put(player, score);
             }
 
-            if (playerCountOnStart == 2 && players.size() >= 2) {
-                ClientHandler p1 = players.get(0);
-                ClientHandler p2 = players.get(1);
-                int scoreP1 = scores.getOrDefault(p1, 0);
-                int scoreP2 = scores.getOrDefault(p2, 0);
-                if (scoreP1 < scoreP2) resultMessage = "WINNER:" + p1.getUsername() + " (점수: " + scoreP1 + " vs " + scoreP2 + ")";
-                else if (scoreP2 < scoreP1) resultMessage = "WINNER:" + p2.getUsername() + " (점수: " + scoreP2 + " vs " + scoreP1 + ")";
-                else resultMessage = "DRAW (점수: " + scoreP1 + ")";
+            if (playerCountOnStart == 2) {
+                List<ClientHandler> pList = new ArrayList<>(playerColors.keySet());
+                ClientHandler p1 = pList.get(0);
+                ClientHandler p2 = pList.get(1);
+
+                int scoreP1 = scores.getOrDefault(p1, 999);
+                int scoreP2 = scores.getOrDefault(p2, 999);
+
+                ClientHandler winner, loser;
+                if (scoreP1 < scoreP2) { winner = p1; loser = p2; }
+                else if (scoreP2 < scoreP1) { winner = p2; loser = p1; }
+                else { winner = null; loser = null; }
+
+                if (winner != null) {
+                    scoreChanges.put(winner.getUsername(), 1.5);
+                    scoreChanges.put(loser.getUsername(), -0.5);
+                    resultMessage = "WINNER:" + winner.getUsername() + " (점수: " + scoreP1 + " vs " + scoreP2 + ")";
+                } else {
+                    scoreChanges.put(p1.getUsername(), 0.0);
+                    scoreChanges.put(p2.getUsername(), 0.0);
+                    resultMessage = "DRAW (점수: " + scoreP1 + ")";
+                }
+
             } else {
                 List<Map.Entry<ClientHandler, Integer>> sorted = new ArrayList<>(scores.entrySet());
                 sorted.sort(Comparator.comparingInt(Map.Entry::getValue));
+
+                double[] points = {2.0, 1.0, 0.0, -1.0};
                 StringBuilder rankStr = new StringBuilder();
+
                 for (int i = 0; i < sorted.size(); i++) {
                     ClientHandler p = sorted.get(i).getKey();
                     int s = sorted.get(i).getValue();
-                    rankStr.append((i + 1)).append("등: ").append(p.getUsername()).append(" (").append(s).append("점) | ");
+                    double pointChange = (i < points.length) ? points[i] : -1.0;
+
+                    if (s == 999) pointChange = -1.0;
+
+                    scoreChanges.put(p.getUsername(), pointChange);
+
+                    rankStr.append((i + 1)).append("등: ").append(p.getUsername()).append(" (")
+                            .append(s == 999 ? "기권" : s).append("점 / ").append(pointChange > 0 ? "+" : "")
+                            .append(pointChange).append("점) | ");
                 }
                 resultMessage = rankStr.toString();
+            }
+
+            if (!scoreChanges.isEmpty()) {
+                server.recordGameResult(scoreChanges);
             }
         }
 
@@ -473,11 +563,11 @@ public class GameRoom {
     }
 
     private String getPlayerNameByColor(int color) {
-        if (playerCountOnStart == 4) {
-            return players.size() >= color ? players.get(color - 1).getUsername() : "X";
-        } else {
-            return players.get((color - 1) % 2).getUsername();
+        ClientHandler player = getPlayerByColor(color);
+        if (player != null) {
+            return player.getUsername();
         }
+        return "X";
     }
 
     private String getColorName(int color) {
