@@ -1,4 +1,3 @@
-// game/BlokusClient.java
 package game;
 
 import javax.swing.*;
@@ -10,14 +9,18 @@ import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
-// 자동 스캔을 위해 추가된 import
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -32,12 +35,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class BlokusClient extends JFrame {
 
-    private String serverHost = "127.0.0.1"; // 스캔 성공 시 이 값이 덮어써짐
-    private int serverPort = 12345;
-
     private Socket socket;
-    private PrintWriter out;
-    private BufferedReader in;
+    private ObjectOutputStream out;
+    private ObjectInputStream in;
     private ClientReceiver receiver;
 
     private String username;
@@ -51,12 +51,7 @@ public class BlokusClient extends JFrame {
 
     private boolean handlingLoginFail = false;
 
-    // --- (자동 스캔 관련) 스캐너 설정 ---
-    private final int SCAN_THREADS = 50; // 동시에 스캔할 스레드 수
-    private final int SCAN_TIMEOUT = 100; // 각 IP당 타임아웃 (ms)
-    private final int TOTAL_TIMEOUT = 10; // 전체 스캔 타임아웃 (초)
-    // ------------------------------------
-
+    private static final String CONFIG_FILE = "server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -97,55 +92,71 @@ public class BlokusClient extends JFrame {
     }
 
     private void cleanupConnection() {
-        if (out != null) out.close();
-        if (in != null) try { in.close(); } catch (IOException e) {}
-        if (socket != null) try { socket.close(); } catch (IOException e) {}
+        try { if (in != null) in.close(); } catch (IOException e) {}
+        try { if (out != null) out.close(); } catch (IOException e) {}
+        try { if (socket != null) socket.close(); } catch (IOException e) {}
     }
 
-    /**
-     * (수정) 로그인 시도 (서버 자동 스캔 기능 포함)
-     */
+    private String[] loadServerConfig() {
+        File configFile = new File(CONFIG_FILE);
+        if (!configFile.exists()) {
+            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일을 찾을 수 없습니다.", "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+
+        try (BufferedReader br = new BufferedReader(new FileReader(configFile))) {
+            String host = br.readLine();
+            String portStr = br.readLine();
+
+            if (host == null || host.trim().isEmpty() || portStr == null || portStr.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일 형식이 잘못되었습니다.\n첫 줄: IP, 둘째 줄: 포트", "설정 오류", JOptionPane.ERROR_MESSAGE);
+                return null;
+            }
+
+            int port = Integer.parseInt(portStr.trim());
+            return new String[]{host.trim(), String.valueOf(port)};
+
+        } catch (FileNotFoundException e) {
+            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일을 찾을 수 없습니다.", "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 읽기 오류: " + e.getMessage(), "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this, "포트 번호가 잘못되었습니다: " + e.getMessage(), "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+    }
+
     public void attemptLogin(String username) {
         if (username.trim().isEmpty()) {
             JOptionPane.showMessageDialog(this, "이름을 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
-        // 1. 로그인 UI 비활성화 및 상태 메시지 표시
-        loginScreen.setLoginControlsEnabled(false, "로컬 서버 찾는 중...");
+        loginScreen.setLoginControlsEnabled(false, "서버 설정(server.txt) 읽는 중...");
 
-        // 2. SwingWorker를 사용하여 백그라운드에서 서버 스캔 및 연결 시도
-        SwingWorker<String, String> loginWorker = new SwingWorker<>() {
+        String[] config = loadServerConfig();
+        if (config == null) {
+            loginScreen.setLoginControlsEnabled(true, "설정 파일 오류.");
+            return;
+        }
 
+        String host = config[0];
+        int port = Integer.parseInt(config[1]);
+
+        loginScreen.setLoginControlsEnabled(false, host + ":" + port + " 서버에 연결 시도 중...");
+
+        SwingWorker<String, Void> loginWorker = new SwingWorker<>() {
             @Override
             protected String doInBackground() throws Exception {
-                // 2-1. 네트워크 스캔
-                String foundIp = scanNetworkForServer();
-
-                if (foundIp == null) {
-                    // (스캔 실패) 127.0.0.1 (localhost)로 마지막 시도
-                    publish("서버를 못찾음. localhost로 접속 시도...");
-                    foundIp = "127.0.0.1";
-                }
-
-                // 2-2. 서버 IP 설정
-                serverHost = foundIp;
-                publish(foundIp + " 서버에 연결 시도 중...");
-
-                // 2-3. 연결 시도
                 try {
-                    connect(); // (수정) connect()는 이제 serverHost 변수를 사용
+                    connect(host, port);
                     sendMessage(Protocol.C2S_LOGIN + ":" + username);
-                    return "LOGIN_ATTEMPTED"; // 성공 여부는 S2C 메시지가 처리
+                    return "LOGIN_ATTEMPTED";
                 } catch (IOException e) {
-                    return "CONNECT_FAILED:" + e.getMessage(); // 연결 자체 실패
+                    return "CONNECT_FAILED:" + e.getMessage();
                 }
-            }
-
-            @Override
-            protected void process(java.util.List<String> chunks) {
-                // doInBackground에서 publish()로 보낸 메시지 처리
-                loginScreen.statusLabel.setText(chunks.get(chunks.size() - 1));
             }
 
             @Override
@@ -156,17 +167,12 @@ public class BlokusClient extends JFrame {
                     if (result.startsWith("CONNECT_FAILED")) {
                         String errorMsg = result.split(":", 2)[1];
                         JOptionPane.showMessageDialog(BlokusClient.this, "서버 연결 실패: " + errorMsg, "연결 오류", JOptionPane.ERROR_MESSAGE);
-                        loginScreen.setLoginControlsEnabled(true, " "); // UI 다시 활성화
+                        loginScreen.setLoginControlsEnabled(true, " ");
                     }
-                    // "LOGIN_ATTEMPTED"인 경우:
-                    // S2C_LOGIN_SUCCESS 또는 S2C_LOGIN_FAIL 메시지가
-                    // ClientReceiver 스레드에서 처리될 것임.
-                    // 만약 S2C_LOGIN_FAIL이 오면, handleServerMessage가 UI를 활성화함.
-
                 } catch (Exception e) {
                     e.printStackTrace();
                     JOptionPane.showMessageDialog(BlokusClient.this, "로그인 중 알 수 없는 오류: " + e.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
-                    loginScreen.setLoginControlsEnabled(true, " "); // UI 다시 활성화
+                    loginScreen.setLoginControlsEnabled(true, " ");
                 }
             }
         };
@@ -174,99 +180,15 @@ public class BlokusClient extends JFrame {
         loginWorker.execute();
     }
 
-    /**
-     * (수정) attemptLogin에서 설정된 serverHost 변수를 사용하여 연결
-     */
-    private void connect() throws IOException {
+    private void connect(String host, int port) throws IOException {
         cleanupConnection();
-        // this.serverHost는 attemptLogin의 SwingWorker에서 설정된 값을 사용
-        socket = new Socket(serverHost, serverPort);
-        out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        socket = new Socket(host, port);
+        out = new ObjectOutputStream(socket.getOutputStream());
+        out.flush();
+        in = new ObjectInputStream(socket.getInputStream());
         receiver = new ClientReceiver(in, this);
         receiver.start();
     }
-
-    // --- (추가) 서버 스캔 로직 ---
-
-    /**
-     * 로컬 네트워크(같은 Wi-Fi)에서 서버를 스캔합니다.
-     * @return 발견된 서버 IP (String) 또는 null
-     */
-    private String scanNetworkForServer() {
-        String ipBase = getLocalIpBase();
-        if (ipBase == null) {
-            System.err.println("로컬 IP 주소(192.168.x.x 등)를 찾을 수 없습니다.");
-            return null; // 스캔 불가
-        }
-
-        ExecutorService executor = Executors.newFixedThreadPool(SCAN_THREADS);
-        AtomicReference<String> foundHost = new AtomicReference<>(null);
-
-        System.out.println("Scanning IP range: " + ipBase + "1-254");
-
-        for (int i = 1; i <= 254; i++) {
-            final String host = ipBase + i;
-            executor.submit(() -> {
-                if (foundHost.get() != null) {
-                    return; // 이미 다른 스레드가 찾음
-                }
-                try (Socket s = new Socket()) {
-                    s.connect(new InetSocketAddress(host, serverPort), SCAN_TIMEOUT);
-                    // 연결 성공!
-                    if (foundHost.compareAndSet(null, host)) {
-                        System.out.println("서버 발견: " + host);
-                        executor.shutdownNow(); // 다른 모든 스캔 작업 즉시 중지
-                    }
-                } catch (IOException e) {
-                    // 연결 실패 (타임아웃 또는 거부) - 정상
-                }
-            });
-        }
-
-        executor.shutdown();
-        try {
-            // 모든 작업이 끝나거나, shutdownNow()가 호출되거나, 타임아웃될 때까지 대기
-            if (!executor.awaitTermination(TOTAL_TIMEOUT, TimeUnit.SECONDS)) {
-                executor.shutdownNow(); // 타임아웃 발생 시 강제 종료
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-        }
-
-        return foundHost.get();
-    }
-
-    /**
-     * 로컬 IP 주소의 앞 3자리 (예: "192.168.0.")를 찾습니다.
-     * @return "192.168.x." 형태의 IP 접두사 또는 null
-     */
-    private String getLocalIpBase() {
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            for (NetworkInterface ni : Collections.list(interfaces)) {
-                if (ni.isLoopback() || !ni.isUp() || ni.isVirtual()) {
-                    continue;
-                }
-                Enumeration<InetAddress> addresses = ni.getInetAddresses();
-                for (InetAddress addr : Collections.list(addresses)) {
-                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
-                        String ip = addr.getHostAddress();
-                        // 핫스팟 (예: 192.168.43.x) 또는 일반 공유기 (예: 192.168.0.x 등)
-                        if (ip.startsWith("192.168.") || ip.startsWith("172.") || ip.startsWith("10.")) {
-                            return ip.substring(0, ip.lastIndexOf('.') + 1);
-                        }
-                    }
-                }
-            }
-        } catch (SocketException e) {
-            e.printStackTrace();
-        }
-        return null; // 못 찾음
-    }
-
-    // ----------------------------
-
 
     public void handleConnectionLost() {
         if (handlingLoginFail) {
@@ -279,7 +201,6 @@ public class BlokusClient extends JFrame {
         this.username = null;
         cardLayout.show(mainPanel, "LOGIN");
 
-        // (수정) 연결 끊김 시 로그인 UI 다시 활성화
         if (loginScreen != null) {
             loginScreen.setLoginControlsEnabled(true, "서버 연결 끊김.");
         }
@@ -298,13 +219,11 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_LOGIN_SUCCESS:
                         username = loginScreen.getUsername();
                         cardLayout.show(mainPanel, "LOBBY");
-                        // (수정) 로그인 성공 시 UI 활성화 (다음 접속을 위해)
                         loginScreen.setLoginControlsEnabled(true, " ");
                         break;
                     case Protocol.S2C_LOGIN_FAIL:
                         handlingLoginFail = true;
                         JOptionPane.showMessageDialog(BlokusClient.this, "로그인 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
-                        // (수정) 로그인 실패 시 UI 다시 활성화
                         loginScreen.setLoginControlsEnabled(true, "로그인 실패.");
                         break;
 
@@ -358,6 +277,10 @@ public class BlokusClient extends JFrame {
                         roomScreen.appendChatMessage(data);
                         gameScreen.appendChatMessage(data);
                         break;
+                    case Protocol.S2C_WHISPER:
+                        roomScreen.appendChatMessage(data, true);
+                        gameScreen.appendChatMessage(data, true);
+                        break;
                     case Protocol.S2C_SYSTEM_MSG:
                         if (data != null && data.contains("로비로")) {
                             cardLayout.show(mainPanel, "LOBBY");
@@ -373,12 +296,21 @@ public class BlokusClient extends JFrame {
     }
 
     public void sendMessage(String msg) {
-        if (out != null) out.println(msg);
+        if (out != null) {
+            try {
+                out.writeObject(msg);
+                out.flush();
+            } catch (IOException e) {
+                System.err.println("C2S Send Error: " + e.getMessage());
+                handleConnectionLost();
+            }
+        }
     }
 
     public String getUsername() { return username; }
 
     public static void main(String[] args) {
+        System.setProperty("file.encoding", "UTF-8");
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -389,10 +321,10 @@ public class BlokusClient extends JFrame {
 }
 
 class ClientReceiver extends Thread {
-    private final BufferedReader in;
+    private final ObjectInputStream in;
     private final BlokusClient client;
 
-    public ClientReceiver(BufferedReader in, BlokusClient client) {
+    public ClientReceiver(ObjectInputStream in, BlokusClient client) {
         this.in = in;
         this.client = client;
     }
@@ -401,9 +333,11 @@ class ClientReceiver extends Thread {
     public void run() {
         try {
             String message;
-            while ((message = in.readLine()) != null) {
+            while ((message = (String) in.readObject()) != null) {
                 client.handleServerMessage(message);
             }
+        } catch (ClassNotFoundException e) {
+            System.err.println("잘못된 객체 수신: " + e.getMessage());
         } catch (IOException e) {
         } finally {
             client.handleConnectionLost();
@@ -411,13 +345,9 @@ class ClientReceiver extends Thread {
     }
 }
 
-/**
- * (수정) LoginScreen (UI 원래대로 복귀 + 상태 표시 기능)
- */
 class LoginScreen extends JPanel {
     private final BlokusClient client;
 
-    // (수정) UI 컨트롤을 BlokusClient에서 제어할 수 있도록 참조 저장
     final JTextField usernameField;
     final JButton loginButton;
     final JLabel statusLabel;
@@ -425,13 +355,11 @@ class LoginScreen extends JPanel {
     public LoginScreen(BlokusClient client) {
         this.client = client;
 
-        // (수정) 레이아웃 변경 (GridBagLayout 사용)
         setLayout(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        // 1행: 이름
         gbc.gridx = 0; gbc.gridy = 0;
         add(new JLabel("이름:"), gbc);
 
@@ -439,22 +367,19 @@ class LoginScreen extends JPanel {
         usernameField = new JTextField(15);
         add(usernameField, gbc);
 
-        // 2행: 접속 버튼
         gbc.gridx = 0; gbc.gridy = 1;
-        gbc.gridwidth = 2; // 2칸 병합
+        gbc.gridwidth = 2;
         loginButton = new JButton("접속");
         add(loginButton, gbc);
 
-        // 3행: 상태 라벨 (평소엔 비어있음)
         gbc.gridx = 0; gbc.gridy = 2;
-        gbc.gridwidth = 2; // 2칸 병합
+        gbc.gridwidth = 2;
         statusLabel = new JLabel(" ");
         statusLabel.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
         statusLabel.setForeground(Color.GRAY);
         statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
         add(statusLabel, gbc);
 
-        // (수정) 로그인 버튼 리스너 (이름만 전달)
         loginButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -462,7 +387,6 @@ class LoginScreen extends JPanel {
             }
         });
 
-        // 이름 필드에서 Enter 키로 로그인
         usernameField.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -475,9 +399,6 @@ class LoginScreen extends JPanel {
         return usernameField.getText();
     }
 
-    /**
-     * (추가) 로그인 버튼과 이름 필드를 활성화/비활성화하고 상태 메시지를 설정합니다.
-     */
     public void setLoginControlsEnabled(boolean enabled, String status) {
         this.usernameField.setEnabled(enabled);
         this.loginButton.setEnabled(enabled);
@@ -486,15 +407,12 @@ class LoginScreen extends JPanel {
 }
 
 class LobbyScreen extends JPanel {
-    // ... (이하 코드는 수정 없음) ...
     private final BlokusClient client;
     private final CardLayout cardLayout;
 
-    // 점수판 패널
     private final JTable leaderboardTable;
     private final DefaultTableModel leaderboardModel;
 
-    // 방 목록 패널
     private final JList<String> roomList;
     private final DefaultListModel<String> roomListModel;
 
@@ -506,7 +424,6 @@ class LobbyScreen extends JPanel {
         cardLayout = new CardLayout();
         setLayout(cardLayout);
 
-        // --- 1. 점수판 패널 (기본) ---
         JPanel leaderboardPanel = new JPanel(new BorderLayout());
 
         String[] columnNames = {"순위", "이름", "점수"};
@@ -526,14 +443,8 @@ class LobbyScreen extends JPanel {
 
         leaderboardPanel.add(new JScrollPane(leaderboardTable), BorderLayout.CENTER);
 
-        // --- (1번) 점수판 하단 버튼 수정 ---
         JPanel leaderboardBottomPanel = new JPanel();
 
-        // (1번) '방 만들기' 버튼 제거
-        // JButton createButton = new JButton("방 만들기");
-        // createButton.addActionListener(e -> createRoom());
-
-        // (1번) '방 접속하기' -> '방 목록 / 생성'으로 이름 변경
         JButton showRoomsButton = new JButton("방 목록 / 생성");
         showRoomsButton.addActionListener(new ActionListener() {
             @Override
@@ -550,14 +461,10 @@ class LobbyScreen extends JPanel {
             }
         });
 
-        // leaderboardBottomPanel.add(createButton); // (1번) 제거
         leaderboardBottomPanel.add(showRoomsButton);
         leaderboardBottomPanel.add(refreshLeaderboardButton);
         leaderboardPanel.add(leaderboardBottomPanel, BorderLayout.SOUTH);
-        // ------------------------------
 
-
-        // --- 2. 방 목록 패널 ---
         JPanel roomListPanel = new JPanel(new BorderLayout());
 
         roomListModel = new DefaultListModel<>();
@@ -574,10 +481,8 @@ class LobbyScreen extends JPanel {
 
         roomListPanel.add(new JScrollPane(roomList), BorderLayout.CENTER);
 
-        // --- (1번) 방 목록 하단 버튼 수정 ---
         JPanel roomListBottomPanel = new JPanel();
 
-        // (1번) '방 만들기' 버튼 *추가*
         JButton createButtonInRoomList = new JButton("방 만들기");
         createButtonInRoomList.addActionListener(new ActionListener() {
             @Override
@@ -610,15 +515,12 @@ class LobbyScreen extends JPanel {
             }
         });
 
-        roomListBottomPanel.add(createButtonInRoomList); // (1번) 추가
+        roomListBottomPanel.add(createButtonInRoomList);
         roomListBottomPanel.add(joinButton);
         roomListBottomPanel.add(refreshRoomsButton);
         roomListBottomPanel.add(backButton);
         roomListPanel.add(roomListBottomPanel, BorderLayout.SOUTH);
-        // ------------------------------
 
-
-        // --- 패널 추가 ---
         this.add(leaderboardPanel, LEADERBOARD_PANEL);
         this.add(roomListPanel, ROOM_LIST_PANEL);
 
@@ -693,7 +595,6 @@ class LobbyScreen extends JPanel {
 }
 
 class RoomScreen extends JPanel {
-    // ... (이하 코드는 수정 없음) ...
     private final BlokusClient client;
     private final JLabel roomNameLabel;
     private final JList<String> playerList;
@@ -713,6 +614,7 @@ class RoomScreen extends JPanel {
     private Style styleBlue;
     private Style styleYellow;
     private Style styleGreen;
+    private Style styleWhisper;
 
     public RoomScreen(BlokusClient client) {
         this.client = client;
@@ -757,6 +659,10 @@ class RoomScreen extends JPanel {
         styleGreen = systemArea.addStyle("Green", styleDefault);
         StyleConstants.setForeground(styleGreen, Color.GREEN.darker());
         StyleConstants.setBold(styleGreen, true);
+
+        styleWhisper = systemArea.addStyle("Whisper", styleDefault);
+        StyleConstants.setForeground(styleWhisper, Color.MAGENTA);
+        StyleConstants.setItalic(styleWhisper, true);
 
         chatTabs.addTab("시스템", new JScrollPane(systemArea));
 
@@ -822,18 +728,47 @@ class RoomScreen extends JPanel {
 
     private void sendChat() {
         String message = chatField.getText();
-        if (!message.trim().isEmpty()) {
-            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
-            chatField.setText("");
+        if (message.trim().isEmpty()) {
+            return;
         }
+
+        if (message.startsWith("/")) {
+            String[] parts = message.split(" ", 3);
+            String command = parts[0].toLowerCase();
+
+            if (command.equals("/r")) {
+                if (parts.length == 3 && !parts[1].trim().isEmpty() && !parts[2].trim().isEmpty()) {
+                    client.sendMessage(Protocol.C2S_WHISPER + ":" + parts[1] + ":" + parts[2]);
+                } else if (parts.length < 2) {
+                    appendChatMessage("[시스템]: 귓속말 사용법: /r [닉네임] [메세지]");
+                } else if (parts.length == 2) {
+                    appendChatMessage("[시스템]: 귓속말할 메세지를 입력해야 합니다.");
+                } else {
+                    appendChatMessage("[시스템]: 귓속말 사용법: /r [닉네임] [메세지]");
+                }
+            } else {
+                appendChatMessage("[시스템]: 알 수 없는 명령어입니다. (사용 가능: /r)");
+            }
+        } else {
+            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
+        }
+        chatField.setText("");
     }
 
     public void appendChatMessage(String data) {
-        String message = data.replaceFirst(":", ": ");
+        appendChatMessage(data, false);
+    }
 
-        if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
-            StyledDocument doc = systemArea.getStyledDocument();
-            try {
+    public void appendChatMessage(String data, boolean isWhisper) {
+        String message = data.replaceFirst(":", ": ");
+        StyledDocument doc = systemArea.getStyledDocument();
+
+        try {
+            if (isWhisper) {
+                doc.insertString(doc.getLength(), message + "\n", styleWhisper);
+                systemArea.setCaretPosition(systemArea.getDocument().getLength());
+                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
+            } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
                     doc.insertString(doc.getLength(), parts[0] + "→ ", styleDefault);
@@ -860,14 +795,15 @@ class RoomScreen extends JPanel {
                 } else {
                     doc.insertString(doc.getLength(), message + "\n", styleDefault);
                 }
-            } catch (BadLocationException e) {
-                // e.printStackTrace();
-            }
-            systemArea.setCaretPosition(systemArea.getDocument().getLength());
+                systemArea.setCaretPosition(systemArea.getDocument().getLength());
+                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
-        } else {
-            chatArea.append(message + "\n");
-            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+            } else {
+                chatArea.append(message + "\n");
+                chatArea.setCaretPosition(chatArea.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatArea.getParent().getParent());
+            }
+        } catch (Exception e) {
         }
     }
 
@@ -910,7 +846,6 @@ class RoomScreen extends JPanel {
 }
 
 class WrapLayout extends FlowLayout {
-    // ... (이하 코드는 수정 없음) ...
     public WrapLayout() { super(); }
     public WrapLayout(int align) { super(align); }
     public WrapLayout(int align, int hgap, int vgap) { super(align, hgap, vgap); }

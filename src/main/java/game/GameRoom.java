@@ -1,10 +1,11 @@
 package game;
 
 import java.awt.*;
+import java.io.Serializable;
 import java.util.*;
 import java.util.List;
 
-public class GameRoom {
+public class GameRoom implements Serializable {
     private int roomId;
     private String roomName;
     private ClientHandler host;
@@ -26,8 +27,8 @@ public class GameRoom {
 
     private static final int INITIAL_TIME_SECONDS = 300;
     private static final int TIME_BONUS_SECONDS = 20;
-    private Timer gameTimer;
-    private TimerTask currentTimerTask;
+    private transient Timer gameTimer;
+    private transient TimerTask currentTimerTask;
     private Map<Integer, Integer> remainingTime = Collections.synchronizedMap(new HashMap<>());
     private Map<Integer, Boolean> isTimedOut = Collections.synchronizedMap(new HashMap<>());
 
@@ -38,10 +39,12 @@ public class GameRoom {
         this.server = server;
     }
 
-    public synchronized boolean isPlayerInRoom(String username) {
-        for (ClientHandler player : players) {
-            if (player.getUsername().equalsIgnoreCase(username)) {
-                return true;
+    public boolean isPlayerInRoom(String username) {
+        synchronized (players) {
+            for (ClientHandler player : players) {
+                if (player.getUsername().equalsIgnoreCase(username)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -59,15 +62,6 @@ public class GameRoom {
         boolean wasHost = player.equals(host);
         players.remove(player);
         player.setCurrentRoom(null);
-
-        // --- (3번) 수정 ---
-        // 기권/접속종료 시 게임을 강제로 끝내지 않습니다.
-        // if (gameStarted) {
-        //    if (players.size() < 2) {
-        //        handleGameOver(true);
-        //    }
-        // }
-        // ------------------
 
         if (players.isEmpty()) {
             return true;
@@ -159,15 +153,9 @@ public class GameRoom {
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
         ClientHandler turnPlayer;
         if (playerCountOnStart == 4) {
-            // (3번) 기권한 플레이어는 players 리스트에서 제거되므로, 이 로직은 턴 계산에 실패할 수 있음.
-            // (3번) 하지만 어차피 isTimedOut 플래그로 턴이 넘어가므로,
-            // (3번) turnPlayer가 실제 player와 일치하는지만 확인하면 됨.
-            // (3번) -> 이 로직을 쓰지 말고, 색상으로 플레이어를 찾아야 함.
-
-            // (3번) 수정: players 리스트 대신 playerHands 맵에서 현재 턴 색상의 소유자를 찾음
             turnPlayer = getPlayerByColor(currentTurnColor);
 
-        } else { // 1v1
+        } else {
             turnPlayer = getPlayerByColor(currentTurnColor);
         }
 
@@ -224,7 +212,6 @@ public class GameRoom {
         advanceTurn();
     }
 
-    // (3번) handlePlaceBlock을 위한 헬퍼 메서드
     private ClientHandler getPlayerByColor(int color) {
         for (ClientHandler player : playerColors.keySet()) {
             for (int c : playerColors.get(player)) {
@@ -239,7 +226,6 @@ public class GameRoom {
 
     public synchronized void handlePassTurn(ClientHandler player) {
         if (player != null) {
-            // (3번) 수정: 턴 플레이어 확인 로직 변경
             ClientHandler turnPlayer = getPlayerByColor(currentTurnColor);
 
             if (turnPlayer == null || !turnPlayer.equals(player)) {
@@ -256,14 +242,12 @@ public class GameRoom {
         }
     }
 
-    // (기권) C2S_RESIGN_COLOR (버튼 기권) 처리
     public synchronized void handleResignColor(ClientHandler player, String data) {
         if (!gameStarted) return;
 
         try {
             int colorToResign = Integer.parseInt(data);
 
-            // 본인 턴의 색상만 기권 가능
             if (colorToResign != currentTurnColor) {
                 player.sendMessage(Protocol.S2C_INVALID_MOVE + ":현재 턴의 색상만 기권할 수 있습니다.");
                 return;
@@ -280,7 +264,6 @@ public class GameRoom {
                 broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색이 기권했습니다.");
             }
 
-            // 기권도 턴을 넘김 (passCount는 증가시키지 않음)
             handlePassTurn(null);
 
         } catch (NumberFormatException e) {
@@ -288,7 +271,6 @@ public class GameRoom {
         }
     }
 
-    // (기권) 이 메서드는 이제 *연결 끊김* (disconnect) 시에만 호출됨
     public synchronized void handleDisconnectOrResign(ClientHandler player, String reason) {
         if (!gameStarted) return;
         int[] colors = playerColors.get(player);
@@ -301,16 +283,11 @@ public class GameRoom {
             }
         }
 
-        // (3번) 수정: 플레이어가 나갔을 때, 턴이 그 플레이어에게 멈추는 것을 방지
         ClientHandler currentTurnPlayer = getPlayerByColor(currentTurnColor);
         if (player.equals(currentTurnPlayer)) {
             broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 턴을 포기했습니다. 턴이 넘어갑니다.");
-            handlePassTurn(null); // (3번) 강제로 턴을 넘김
+            handlePassTurn(null);
         }
-
-        // (3번) removePlayer(player)는 BlokusServer.onClientDisconnect에서 호출됨
-        // (3번) 여기서는 호출하지 않음 (이 메서드는 BlokusServer에서 호출되기 때문)
-        // (3번) players.size() < 2 체크는 removePlayer에서 이미 제거됨.
     }
 
     private boolean isValidMove(BlokusPiece piece, int x, int y, int color) {
@@ -384,8 +361,8 @@ public class GameRoom {
             currentPlayerTurnIndex = (currentPlayerTurnIndex + 1) % 4;
             currentTurnColor = currentPlayerTurnIndex + 1;
             attempts++;
-            if (attempts > 4) { // (3번) 모든 색이 isTimedOut이면 무한 루프 방지
-                if (!checkGameOver()) { // (3번) 추가: 혹시 모르니 게임오버 체크
+            if (attempts > 4) {
+                if (!checkGameOver()) {
                     handleGameOver(false);
                 }
                 return;
@@ -418,7 +395,6 @@ public class GameRoom {
                     remainingTime.put(currentTurnColor, time);
 
                     if (time <= 0) {
-                        // (기권) 타임아웃 시 isTimedOut 설정 및 메시지 브로드캐스트
                         isTimedOut.put(currentTurnColor, true);
                         broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
@@ -430,6 +406,7 @@ public class GameRoom {
                 }
             }
         };
+        if (gameTimer == null) gameTimer = new Timer();
         gameTimer.scheduleAtFixedRate(currentTimerTask, 1000, 1000);
     }
 
@@ -457,8 +434,6 @@ public class GameRoom {
     private boolean isPlayerTimedOut(ClientHandler player) {
         int[] colors = playerColors.get(player);
         if (colors == null) return true;
-        // (3번) 수정: isTimedOut.getOrDefault 사용
-        // (기권) 1v1 시, 한 색만 타임아웃되어도 타임아웃으로 간주
         for (int c : colors) {
             if (isTimedOut.getOrDefault(c, false)) return true;
         }
@@ -476,37 +451,24 @@ public class GameRoom {
         Map<String, Double> scoreChanges = new HashMap<>();
 
         if (forced) {
-            // (3번) 이 로직은 이제 removePlayer에서 호출되지 않음.
             resultMessage = "WINNER:" + (players.isEmpty() ? "NONE" : players.get(0).getUsername()) + " (강제승)";
         } else {
             Map<ClientHandler, Integer> scores = new HashMap<>();
 
-            // (3번) playerHands 맵에는 기권한 유저가 남아있을 수 있음.
-            // (3번) playerColors 맵을 기준으로 점수 계산
             for (ClientHandler player : playerColors.keySet()) {
-
-                // (3번) 이미 나간 유저(isTimedOut)라도 점수 계산은 해야 함
-                // (3V) 단, isPlayerTimedOut은 점수 계산 시점에 나갔는지(true) 아닌지(false)만 알려줌
-                // (3번) -> isTimedOut(c)를 직접 확인해야 함
 
                 int score = 0;
                 List<BlokusPiece> hand = playerHands.get(player);
 
-                if (hand == null) { // (3번) Disconnect 등으로 hand가 없는 경우
-                    score = 999; // (3번) 기권자는 최고 벌점
+                if (hand == null) {
+                    score = 999;
                 } else if (hand.isEmpty()) {
-                    score = -15; // 보너스
+                    score = -15;
                 } else {
                     for (BlokusPiece piece : hand) {
-                        // (3번) 기권/타임아웃된 색상의 블록은 점수 계산에 포함
-                        // (3번) (기권 시점의 점수가 확정되어야 하므로)
-                        // (3번) -> 이 로직은 유지
-                        // (기권) 1v1 (2색) 점수 계산 수정
                         if (playerCountOnStart == 2) {
-                            // 1v1에서는 isTimedOut된 색상의 조각도 점수에 포함
                             score += piece.getSize();
                         } else {
-                            // 4인전에서는 isTimedOut되지 않은 색상만 계산 (기존 로직)
                             if (!isTimedOut.getOrDefault(piece.getColor(), false)) {
                                 score += piece.getSize();
                             }
@@ -514,8 +476,6 @@ public class GameRoom {
                     }
                 }
 
-                // (3번) 기권/타임아웃으로 isTimedOut 플래그가 하나라도 켜진 유저는
-                // (3번) 남은 블록 수와 관계없이 최고 벌점을 부여 (단, 1v1 제외)
                 if (playerCountOnStart == 4 && isPlayerTimedOut(player)) {
                     score = 999;
                 }
@@ -524,7 +484,6 @@ public class GameRoom {
             }
 
             if (playerCountOnStart == 2) {
-                // (3번) 1v1은 players 리스트가 아닌, playerColors 맵을 기준으로
                 List<ClientHandler> pList = new ArrayList<>(playerColors.keySet());
                 ClientHandler p1 = pList.get(0);
                 ClientHandler p2 = pList.get(1);
@@ -548,7 +507,6 @@ public class GameRoom {
                 }
 
             } else {
-                // (3번) 4인 랭킹 점수
                 List<Map.Entry<ClientHandler, Integer>> sorted = new ArrayList<>(scores.entrySet());
                 sorted.sort(Comparator.comparingInt(Map.Entry::getValue));
 
@@ -560,7 +518,6 @@ public class GameRoom {
                     int s = sorted.get(i).getValue();
                     double pointChange = (i < points.length) ? points[i] : -1.0;
 
-                    // (3번) 기권자(999점)는 무조건 -1점
                     if (s == 999) pointChange = -1.0;
 
                     scoreChanges.put(p.getUsername(), pointChange);
@@ -606,20 +563,11 @@ public class GameRoom {
     }
 
     private String getPlayerNameByColor(int color) {
-        // (3번) 수정: 기권한 유저도 이름을 표시해야 하므로, playerColors 맵에서 찾음
         ClientHandler player = getPlayerByColor(color);
         if (player != null) {
             return player.getUsername();
         }
-
-        // (3번) 1v1 로직 (getPlayerByColor로 대체 가능해 보임)
-        // if (playerCountOnStart == 4) {
-        //    return players.size() >= color ? players.get(color - 1).getUsername() : "X";
-        // } else {
-        //    return players.get((color - 1) % 2).getUsername();
-        // }
-
-        return "X"; // (3번) 해당 색상의 플레이어를 못 찾음
+        return "X";
     }
 
     private String getColorName(int color) {
