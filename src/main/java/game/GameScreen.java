@@ -39,6 +39,8 @@ public class GameScreen extends JPanel {
     private boolean isGhostValid = false;
     private boolean amISpectating = false;
 
+    private boolean isPeerlessMode = false;
+
     private JPanel boardPanel;
     private JPanel handPanel;
     private JScrollPane handScrollPane;
@@ -85,7 +87,6 @@ public class GameScreen extends JPanel {
 
         addMouseListener(backgroundClickListener);
 
-
         JPanel topPanel = new JPanel(new BorderLayout(10, 5));
         topPanel.addMouseListener(backgroundClickListener);
 
@@ -118,7 +119,7 @@ public class GameScreen extends JPanel {
 
         turnInfoPanel.add(turnBlockAndTimer, BorderLayout.CENTER);
 
-        turnLabel = new JLabel("게임 대기 중...");
+        turnLabel = new OutlineLabel("게임 대기 중...");
         turnLabel.setFont(new Font("맑은 고딕", Font.BOLD, 14));
         turnInfoPanel.add(turnLabel, BorderLayout.EAST);
 
@@ -155,7 +156,7 @@ public class GameScreen extends JPanel {
             }
         });
 
-        resignButton = new JButton("기권");
+        resignButton = new JButton("탈락하기");
         resignButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -327,11 +328,20 @@ public class GameScreen extends JPanel {
     }
 
     public void initializeGame(String data) {
+        this.isPeerlessMode = false;
+        passButton.setVisible(true);
+        turnInfoPanel.setVisible(true);
+        turnBlockAndTimer.setVisible(true);
+        turnInfoPanel.getComponent(0).setVisible(true);
+        turnLabel.setText("게임 대기 중...");
+        turnLabel.setForeground(UIManager.getColor("Label.foreground"));
+        myColorsInfoPanel.setVisible(true);
+        scoreLabel.setVisible(true);
+
         String[] parts = data.split(":");
         String[] colorsStr = parts[1].split(",");
 
         myColors = new int[colorsStr.length];
-
         myActiveColors.clear();
 
         myColorsInfoPanel.removeAll();
@@ -375,6 +385,43 @@ public class GameScreen extends JPanel {
         updateTimerVisibility();
     }
 
+    public void initializePeerlessGame(String data) {
+        this.isPeerlessMode = true;
+        passButton.setVisible(false);
+        turnInfoPanel.setVisible(true);
+        turnBlockAndTimer.setVisible(false);
+        turnInfoPanel.getComponent(0).setVisible(false);
+        turnLabel.setText("피어리스 모드");
+        myColorsInfoPanel.setVisible(false);
+        scoreLabel.setVisible(true);
+
+        String[] parts = data.split(":");
+        String[] colorsStr = parts[1].split(",");
+
+        myColors = new int[colorsStr.length];
+        myActiveColors.clear();
+
+        for (int i = 0; i < colorsStr.length; i++) {
+            myColors[i] = Integer.parseInt(colorsStr[i]);
+            myActiveColors.add(myColors[i]);
+        }
+
+        int startScore = (myColors.length == 2) ? 178 : 89;
+        scoreLabel.setText("남은 점수: " + startScore);
+
+        toggleColorButton.setVisible(myColors.length > 1);
+        inventoryDisplayColor = (myColors.length > 0) ? myColors[0] : 0;
+
+        board = new int[BOARD_SIZE][BOARD_SIZE];
+        myHand.clear();
+        handPanelCache.clear();
+        handPanel.removeAll();
+        deselectPiece();
+
+        setSpectateMode(false);
+    }
+
+
     private void setSpectateMode(boolean spectating) {
         this.amISpectating = spectating;
 
@@ -394,29 +441,34 @@ public class GameScreen extends JPanel {
 
     private void handleResign() {
         int result = JOptionPane.showConfirmDialog(this,
-                "정말 기권하시겠습니까?\n(현재 턴의 색상만 기권됩니다)", "기권 확인", JOptionPane.YES_NO_OPTION);
+                "정말 탈락하시겠습니까?", "탈락 확인", JOptionPane.YES_NO_OPTION);
 
         if (result == JOptionPane.YES_OPTION) {
-            int colorToResign = currentTurnColor;
+            if (isPeerlessMode) {
+                client.sendMessage(Protocol.C2S_RESIGN_PEERLESS);
+                setSpectateMode(true);
+            } else {
+                int colorToResign = currentTurnColor;
+                client.sendMessage(Protocol.C2S_RESIGN_COLOR + ":" + colorToResign);
 
-            client.sendMessage(Protocol.C2S_RESIGN_COLOR + ":" + colorToResign);
+                myActiveColors.remove(colorToResign);
 
-            myActiveColors.remove(colorToResign);
+                if (myActiveColors.isEmpty() && !amISpectating) {
+                    int spectateResult = JOptionPane.showConfirmDialog(this,
+                            "모든 색상을 기권했습니다. 관전하시겠습니까? (채팅 가능)", "관전", JOptionPane.YES_NO_OPTION);
 
-            if (myActiveColors.isEmpty()) {
-                int spectateResult = JOptionPane.showConfirmDialog(this,
-                        "모든 색상을 기권했습니다. 관전하시겠습니까? (채팅 가능)", "관전", JOptionPane.YES_NO_OPTION);
-
-                if (spectateResult == JOptionPane.YES_OPTION) {
-                    setSpectateMode(true);
-                } else {
-                    client.sendMessage(Protocol.C2S_LEAVE_ROOM);
+                    if (spectateResult == JOptionPane.YES_OPTION) {
+                        setSpectateMode(true);
+                    } else {
+                        client.sendMessage(Protocol.C2S_LEAVE_ROOM);
+                    }
                 }
             }
         }
     }
 
     public void updateGameState(String data) {
+        if (isPeerlessMode) return;
         if (data == null) return;
         String[] parts = data.split(":");
         if (parts.length < 3) return;
@@ -453,7 +505,6 @@ public class GameScreen extends JPanel {
 
         this.currentTurnColor = newTurnColor;
 
-
         myColorsInfoPanel.removeAll();
         myColorsInfoPanel.add(new JLabel("내 색상: "));
         for (int myColor : myColors) {
@@ -471,7 +522,6 @@ public class GameScreen extends JPanel {
         turnBlockAndTimer.repaint();
         myColorsInfoPanel.revalidate();
         myColorsInfoPanel.repaint();
-
 
         updateTimerVisibility();
 
@@ -508,31 +558,23 @@ public class GameScreen extends JPanel {
             rotateButton.setEnabled(true);
             toggleColorButton.setEnabled(myColors.length > 1);
         } else {
-            boolean myTurn = isMyTurn();
-            passButton.setEnabled(myTurn);
-            resignButton.setEnabled(myTurn);
-            rotateButton.setEnabled(true);
-            toggleColorButton.setEnabled(myColors.length > 1);
+            if (isPeerlessMode) {
+                passButton.setEnabled(false);
+                resignButton.setEnabled(true);
+                rotateButton.setEnabled(true);
+                toggleColorButton.setEnabled(myColors.length > 1);
+            } else {
+                boolean myTurn = isMyTurn();
+                passButton.setEnabled(myTurn);
+                resignButton.setEnabled(myTurn);
+                rotateButton.setEnabled(true);
+                toggleColorButton.setEnabled(myColors.length > 1);
+            }
         }
     }
 
-
-    public void updatePlayerHand(String data) {
-        myHand.clear();
+    private void calculateAndUpdateScore() {
         int totalScore = 0;
-
-        if (data != null && !data.isEmpty()) {
-            String[] pieces = data.split(",");
-            for (String p : pieces) {
-                String[] pieceData = p.split("/");
-                if (pieceData.length != 2) continue;
-                String id = pieceData[0];
-                int color = Integer.parseInt(pieceData[1]);
-                BlokusPiece newPiece = new BlokusPiece(id, color);
-                myHand.add(newPiece);
-            }
-        }
-
         if (myColors.length == 2) {
             int scoreColor1 = 0;
             int scoreColor2 = 0;
@@ -554,7 +596,24 @@ public class GameScreen extends JPanel {
             }
             scoreLabel.setText("남은 점수: " + totalScore);
         }
+    }
 
+    public void updatePlayerHand(String data) {
+        myHand.clear();
+
+        if (data != null && !data.isEmpty()) {
+            String[] pieces = data.split(",");
+            for (String p : pieces) {
+                String[] pieceData = p.split("/");
+                if (pieceData.length != 2) continue;
+                String id = pieceData[0];
+                int color = Integer.parseInt(pieceData[1]);
+                BlokusPiece newPiece = new BlokusPiece(id, color);
+                myHand.add(newPiece);
+            }
+        }
+
+        calculateAndUpdateScore();
         updateHandPanelUI();
     }
 
@@ -569,6 +628,7 @@ public class GameScreen extends JPanel {
     }
 
     public void updateTimer(String data) {
+        if (isPeerlessMode) return;
         if (data == null) return;
         String[] times = data.split(",");
         if (times.length == 4) {
@@ -580,7 +640,7 @@ public class GameScreen extends JPanel {
     }
 
     private void updateTimerVisibility() {
-        if (currentTurnColor == 0) return;
+        if (currentTurnColor == 0 || isPeerlessMode) return;
 
         boolean turnIsMyColor = false;
         for (int c : myColors) {
@@ -614,11 +674,7 @@ public class GameScreen extends JPanel {
         }
     }
 
-
-    public void updateTimerV2(String data) {
-    }
-
-    private String formatTime(int seconds) {
+    public String formatTime(int seconds) {
         if (seconds < 0) seconds = 0;
         return String.format("%d:%02d", seconds / 60, seconds % 60);
     }
@@ -770,22 +826,36 @@ public class GameScreen extends JPanel {
                     return;
                 }
 
-                if (selectedPiece == null) return;
+                if (selectedPiece == null || amISpectating) return;
 
-                if (!isMyTurn()) {
-                    deselectPiece();
-                    return;
-                }
+                if (isPeerlessMode) {
+                    if (isGhostValid) {
+                        String message = String.format("%s:%s:%d:%d:%d:%d",
+                                Protocol.C2S_PLACE_BLOCK,
+                                selectedPiece.getId(),
+                                mouseGridPos.x,
+                                mouseGridPos.y,
+                                currentRotation,
+                                selectedPiece.getColor()
+                        );
+                        client.sendMessage(message);
+                    }
+                } else {
+                    if (!isMyTurn()) {
+                        deselectPiece();
+                        return;
+                    }
 
-                if (isGhostValid) {
-                    String message = String.format("%s:%s:%d:%d:%d",
-                            Protocol.C2S_PLACE_BLOCK,
-                            selectedPiece.getId(),
-                            mouseGridPos.x,
-                            mouseGridPos.y,
-                            currentRotation
-                    );
-                    client.sendMessage(message);
+                    if (isGhostValid) {
+                        String message = String.format("%s:%s:%d:%d:%d",
+                                Protocol.C2S_PLACE_BLOCK,
+                                selectedPiece.getId(),
+                                mouseGridPos.x,
+                                mouseGridPos.y,
+                                currentRotation
+                        );
+                        client.sendMessage(message);
+                    }
                 }
             }
 
@@ -944,7 +1014,7 @@ public class GameScreen extends JPanel {
     }
 
     private boolean isMyTurn() {
-        if (amISpectating) return false;
+        if (amISpectating || isPeerlessMode) return false;
 
         for (int c : myColors) {
             if (c == currentTurnColor) {
@@ -955,6 +1025,7 @@ public class GameScreen extends JPanel {
     }
 
     public void setTurnColor(String colorStr) {
+        if (isPeerlessMode) return;
         try {
             int c = Integer.parseInt(colorStr);
             currentTurnColor = c;
@@ -1090,6 +1161,41 @@ public class GameScreen extends JPanel {
         return bestMatch;
     }
 
+    public void setPeerlessTimer(String text, Color color) {
+        if (!isPeerlessMode) return;
+        turnLabel.setText(text);
+        turnLabel.setForeground(color);
+    }
+
+    public void removePieceFromHand(String pieceId, int color) {
+        BlokusPiece pieceToRemove = null;
+        for (BlokusPiece piece : myHand) {
+            if (piece.getId().equals(pieceId) && piece.getColor() == color) {
+                pieceToRemove = piece;
+                break;
+            }
+        }
+        if (pieceToRemove != null) {
+            myHand.remove(pieceToRemove);
+            calculateAndUpdateScore();
+            updateHandPanelUI();
+        }
+    }
+
+    public void updateBoardState(String data) {
+        if (!isPeerlessMode) return;
+        if (data == null) return;
+
+        String[] cells = data.split(",");
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                board[r][c] = Integer.parseInt(cells[r * BOARD_SIZE + c]);
+            }
+        }
+        boardPanel.repaint();
+    }
+
+
     private class ColorIndicatorPanel extends JPanel {
         private Color color;
 
@@ -1210,7 +1316,12 @@ public class GameScreen extends JPanel {
                 g.setColor(pieceColor);
             }
 
-            boolean active = (piece.getColor() == currentTurnColor);
+            boolean active;
+            if (isPeerlessMode) {
+                active = true;
+            } else {
+                active = (piece.getColor() == currentTurnColor);
+            }
 
             if (!active || amISpectating) {
                 boolean displayActive = (piece.getColor() == inventoryDisplayColor);
@@ -1223,6 +1334,57 @@ public class GameScreen extends JPanel {
                     }
                 }
             }
+        }
+    }
+
+    private class OutlineLabel extends JLabel {
+        private Color outlineColor = Color.BLACK;
+        private int outlineThickness = 1;
+
+        public OutlineLabel(String text) {
+            super(text);
+        }
+
+        @Override
+        public void paintComponent(Graphics g) {
+            String text = getText();
+            if (text == null || text.isEmpty()) {
+                super.paintComponent(g);
+                return;
+            }
+
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+            FontMetrics fm = g2.getFontMetrics();
+            Insets insets = getInsets();
+
+            int x;
+            if (getHorizontalAlignment() == CENTER) {
+                x = (getWidth() - fm.stringWidth(text) - insets.left - insets.right) / 2 + insets.left;
+            } else if (getHorizontalAlignment() == RIGHT) {
+                x = getWidth() - fm.stringWidth(text) - insets.right;
+            } else { // LEFT
+                x = insets.left;
+            }
+
+            int y = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
+
+            g2.setColor(outlineColor);
+            int t = outlineThickness;
+            g2.drawString(text, x - t, y - t);
+            g2.drawString(text, x - t, y + t);
+            g2.drawString(text, x + t, y - t);
+            g2.drawString(text, x + t, y + t);
+            g2.drawString(text, x - t, y);
+            g2.drawString(text, x + t, y);
+            g2.drawString(text, x, y - t);
+            g2.drawString(text, x, y + t);
+
+            g2.setColor(getForeground());
+            g2.drawString(text, x, y);
+
+            g2.dispose();
         }
     }
 }

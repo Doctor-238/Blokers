@@ -133,15 +133,15 @@ public class BlokusServer {
         }
     }
 
-    public GameRoom createRoom(String roomName, ClientHandler host) {
+    public GameRoom createRoom(String roomName, ClientHandler host, GameRoom.GameMode gameMode) {
         int roomId = roomIdCounter.incrementAndGet();
-        GameRoom newRoom = new GameRoom(roomId, roomName, host, this);
+        GameRoom newRoom = new GameRoom(roomId, roomName, host, this, gameMode);
         gameRooms.put(roomId, newRoom);
 
         removeClientFromLobby(host);
         newRoom.addPlayer(host);
 
-        System.out.println("방 생성됨: " + roomName + " (ID: " + roomId + ") by " + host.getUsername());
+        System.out.println(gameMode.name() + " 방 생성됨: " + roomName + " (ID: " + roomId + ") by " + host.getUsername());
         return newRoom;
     }
 
@@ -189,8 +189,8 @@ public class BlokusServer {
                     roomListStr.append(":");
                     hasData = true;
                 }
-                roomListStr.append(String.format("[%d,%s,%d/4];",
-                        room.getRoomId(), room.getRoomName(), room.getPlayerCount()));
+                roomListStr.append(String.format("[%d,%s,%d/4,%s];",
+                        room.getRoomId(), room.getRoomName(), room.getPlayerCount(), room.getGameMode().name()));
             }
         }
         if (hasData) {
@@ -243,7 +243,10 @@ public class BlokusServer {
         if (client.getCurrentRoom() != null) {
             GameRoom room = client.getCurrentRoom();
             room.handleDisconnectOrResign(client, "disconnect");
-            leaveRoom(room, client);
+
+            if (room.getGameMode() != GameRoom.GameMode.PEERLESS) {
+                leaveRoom(room, client);
+            }
         }
         removeClientFromLobby(client);
         System.out.println(client.getUsername() + " 접속 종료.");

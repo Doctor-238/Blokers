@@ -51,7 +51,7 @@ public class BlokusClient extends JFrame {
 
     private boolean handlingLoginFail = false;
 
-    private static final String CONFIG_FILE = "server.txt";
+    private static final String CONFIG_FILE = "src/main/resources/server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -255,6 +255,11 @@ public class BlokusClient extends JFrame {
                         gameScreen.clearChat();
                         cardLayout.show(mainPanel, "GAME");
                         break;
+                    case Protocol.S2C_GAME_START_PEERLESS:
+                        gameScreen.initializePeerlessGame(data);
+                        gameScreen.clearChat();
+                        cardLayout.show(mainPanel, "GAME");
+                        break;
                     case Protocol.S2C_GAME_STATE:
                         gameScreen.updateGameState(data);
                         break;
@@ -268,6 +273,37 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_INVALID_MOVE:
                         JOptionPane.showMessageDialog(BlokusClient.this, "잘못된 이동: " + data, "알림", JOptionPane.WARNING_MESSAGE);
                         break;
+
+                    case Protocol.S2C_PEERLESS_PREP_START:
+                        gameScreen.setPeerlessTimer("준비 시간: 20초 (첫 블록을 배치하세요)", Color.CYAN);
+                        break;
+                    case Protocol.S2C_PEERLESS_PREP_TIMER_UPDATE:
+                        String[] prepData = data.split(":");
+                        String time = prepData[0];
+                        String phase = prepData[1];
+                        if (phase.equals("PREP")) {
+                            gameScreen.setPeerlessTimer("준비 시간: " + time + "초", Color.CYAN);
+                        } else if (phase.equals("COUNTDOWN")) {
+                            gameScreen.setPeerlessTimer("게임 시작 " + time + "초 전!", Color.ORANGE);
+                        }
+                        break;
+                    case Protocol.S2C_PEERLESS_MAIN_START:
+                        gameScreen.setPeerlessTimer("게임 시작!", Color.GREEN);
+                        break;
+                    case Protocol.S2C_PEERLESS_TIMER_UPDATE:
+                        gameScreen.setPeerlessTimer("남은 시간: " + gameScreen.formatTime(Integer.parseInt(data)), Color.WHITE);
+                        break;
+                    case Protocol.S2C_PEERLESS_PLACE_SUCCESS:
+                        String[] pieceData = data.split(":");
+                        gameScreen.removePieceFromHand(pieceData[0], Integer.parseInt(pieceData[1]));
+                        break;
+                    case Protocol.S2C_PEERLESS_PLACE_FAIL:
+                        JOptionPane.showMessageDialog(BlokusClient.this, "배치 실패: " + data, "알림", JOptionPane.WARNING_MESSAGE);
+                        break;
+                    case Protocol.S2C_PEERLESS_BOARD_UPDATE:
+                        gameScreen.updateBoardState(data);
+                        break;
+
                     case Protocol.S2C_GAME_OVER:
                         JOptionPane.showMessageDialog(BlokusClient.this, "게임 종료!\n" + data, "게임 종료", JOptionPane.INFORMATION_MESSAGE);
                         cardLayout.show(mainPanel, "LOBBY");
@@ -528,9 +564,26 @@ class LobbyScreen extends JPanel {
     }
 
     private void createRoom() {
-        String roomName = JOptionPane.showInputDialog(this, "생성할 방의 이름을 입력하세요:", "방 만들기", JOptionPane.PLAIN_MESSAGE);
-        if (roomName != null && !roomName.trim().isEmpty()) {
-            client.sendMessage(Protocol.C2S_CREATE_ROOM + ":" + roomName);
+        JPanel panel = new JPanel(new GridLayout(0, 1));
+        JTextField roomNameField = new JTextField(15);
+        JComboBox<String> modeComboBox = new JComboBox<>(new String[]{"클래식 (Classic)", "피어리스 (Peerless)"});
+
+        panel.add(new JLabel("방 이름:"));
+        panel.add(roomNameField);
+        panel.add(new JLabel("게임 모드:"));
+        panel.add(modeComboBox);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "방 만들기", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+        if (result == JOptionPane.OK_OPTION) {
+            String roomName = roomNameField.getText();
+            String mode = (modeComboBox.getSelectedIndex() == 0) ? "CLASSIC" : "PEERLESS";
+
+            if (roomName != null && !roomName.trim().isEmpty()) {
+                client.sendMessage(Protocol.C2S_CREATE_ROOM + ":" + roomName + ":" + mode);
+            } else {
+                JOptionPane.showMessageDialog(this, "방 이름을 입력해야 합니다.", "오류", JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
 
@@ -587,8 +640,9 @@ class LobbyScreen extends JPanel {
             if (room.isBlank()) continue;
             String roomInfo = room.substring(1, room.length() - 1);
             String[] parts = roomInfo.split(",");
-            if (parts.length >= 3) {
-                roomListModel.addElement(String.format("[ID:%s] %s (%s)", parts[0], parts[1], parts[2]));
+            if (parts.length >= 4) {
+                String modeDisplay = parts[3].equalsIgnoreCase("PEERLESS") ? "피어리스" : "클래식";
+                roomListModel.addElement(String.format("[ID:%s] %s (%s) - %s", parts[0], parts[1], parts[2], modeDisplay));
             }
         }
     }
