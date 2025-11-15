@@ -26,6 +26,7 @@ public class BlokusServer {
     private static final String SCORES_FILE = "blokus_scores.properties";
 
     public static void main(String[] args) {
+        System.setProperty("file.encoding", "UTF-8");
         new BlokusServer().startServer();
     }
 
@@ -101,13 +102,11 @@ public class BlokusServer {
 
 
     public synchronized boolean isUsernameTakenAnywhere(String username) {
-        // (4번) 수정: 대소문자를 구분하지 않고 로비 유저 검색
         for (String lobbyUsername : lobbyClients.keySet()) {
             if (lobbyUsername.equalsIgnoreCase(username)) {
                 return true;
             }
         }
-        // (4번) 방 검색은 이미 equalsIgnoreCase를 사용 중
         for (GameRoom room : gameRooms.values()) {
             if (room.isPlayerInRoom(username)) return true;
         }
@@ -200,6 +199,42 @@ public class BlokusServer {
         client.sendMessage(roomListStr.toString());
     }
 
+    public synchronized void sendWhisper(ClientHandler from, String targetUsername, String message) {
+        ClientHandler target = null;
+
+        for (ClientHandler client : lobbyClients.values()) {
+            if (client.getUsername().equalsIgnoreCase(targetUsername)) {
+                target = client;
+                break;
+            }
+        }
+
+        if (target == null) {
+            for (GameRoom room : gameRooms.values()) {
+                List<ClientHandler> roomPlayers = room.getPlayers();
+                synchronized (roomPlayers) {
+                    for (ClientHandler client : roomPlayers) {
+                        if (client.getUsername().equalsIgnoreCase(targetUsername)) {
+                            target = client;
+                            break;
+                        }
+                    }
+                }
+                if (target != null) break;
+            }
+        }
+
+        if (target != null) {
+            String whisperMsg = String.format("[귓속말 from %s]:%s", from.getUsername(), message);
+            target.sendMessage(Protocol.S2C_WHISPER + ":" + whisperMsg);
+
+            String echoMsg = String.format("[귓속말 to %s]:%s", target.getUsername(), message);
+            from.sendMessage(Protocol.S2C_WHISPER + ":" + echoMsg);
+        } else {
+            from.sendMessage(Protocol.S2C_SYSTEM_MSG + ":[" + targetUsername + "] 님을 찾을 수 없습니다.");
+        }
+    }
+
     public GameRoom getRoom(int roomId) {
         return gameRooms.get(roomId);
     }
@@ -207,12 +242,9 @@ public class BlokusServer {
     public void onClientDisconnect(ClientHandler client) {
         if (client.getCurrentRoom() != null) {
             GameRoom room = client.getCurrentRoom();
-            // (3번) 수정: handleDisconnectOrResign을 먼저 호출하여 턴을 넘기거나 isTimedOut 처리
             room.handleDisconnectOrResign(client, "disconnect");
-            // (3번) leaveRoom은 player를 list에서 제거하고 lobby로 보냄
             leaveRoom(room, client);
         }
-        // (4번) 로비/방 여부와 관계없이 무조건 removeClientFromLobby 호출
         removeClientFromLobby(client);
         System.out.println(client.getUsername() + " 접속 종료.");
     }

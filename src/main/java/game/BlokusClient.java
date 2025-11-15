@@ -1,4 +1,3 @@
-// game/BlokusClient.java
 package game;
 
 import javax.swing.*;
@@ -10,21 +9,35 @@ import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class BlokusClient extends JFrame {
 
-    private String serverHost = "localhost";
-    private int serverPort = 12345;
-
     private Socket socket;
-    private PrintWriter out;
-    private BufferedReader in;
+    private ObjectOutputStream out;
+    private ObjectInputStream in;
     private ClientReceiver receiver;
 
     private String username;
@@ -37,6 +50,8 @@ public class BlokusClient extends JFrame {
     private GameScreen gameScreen;
 
     private boolean handlingLoginFail = false;
+
+    private static final String CONFIG_FILE = "server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -77,9 +92,40 @@ public class BlokusClient extends JFrame {
     }
 
     private void cleanupConnection() {
-        if (out != null) out.close();
-        if (in != null) try { in.close(); } catch (IOException e) {}
-        if (socket != null) try { socket.close(); } catch (IOException e) {}
+        try { if (in != null) in.close(); } catch (IOException e) {}
+        try { if (out != null) out.close(); } catch (IOException e) {}
+        try { if (socket != null) socket.close(); } catch (IOException e) {}
+    }
+
+    private String[] loadServerConfig() {
+        File configFile = new File(CONFIG_FILE);
+        if (!configFile.exists()) {
+            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일을 찾을 수 없습니다.", "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+
+        try (BufferedReader br = new BufferedReader(new FileReader(configFile))) {
+            String host = br.readLine();
+            String portStr = br.readLine();
+
+            if (host == null || host.trim().isEmpty() || portStr == null || portStr.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일 형식이 잘못되었습니다.\n첫 줄: IP, 둘째 줄: 포트", "설정 오류", JOptionPane.ERROR_MESSAGE);
+                return null;
+            }
+
+            int port = Integer.parseInt(portStr.trim());
+            return new String[]{host.trim(), String.valueOf(port)};
+
+        } catch (FileNotFoundException e) {
+            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일을 찾을 수 없습니다.", "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 읽기 오류: " + e.getMessage(), "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this, "포트 번호가 잘못되었습니다: " + e.getMessage(), "설정 오류", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
     }
 
     public void attemptLogin(String username) {
@@ -87,19 +133,59 @@ public class BlokusClient extends JFrame {
             JOptionPane.showMessageDialog(this, "이름을 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
-        try {
-            connect();
-            sendMessage(Protocol.C2S_LOGIN + ":" + username);
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "서버 연결 실패: " + e.getMessage(), "연결 오류", JOptionPane.ERROR_MESSAGE);
+
+        loginScreen.setLoginControlsEnabled(false, "서버 설정(server.txt) 읽는 중...");
+
+        String[] config = loadServerConfig();
+        if (config == null) {
+            loginScreen.setLoginControlsEnabled(true, "설정 파일 오류.");
+            return;
         }
+
+        String host = config[0];
+        int port = Integer.parseInt(config[1]);
+
+        loginScreen.setLoginControlsEnabled(false, host + ":" + port + " 서버에 연결 시도 중...");
+
+        SwingWorker<String, Void> loginWorker = new SwingWorker<>() {
+            @Override
+            protected String doInBackground() throws Exception {
+                try {
+                    connect(host, port);
+                    sendMessage(Protocol.C2S_LOGIN + ":" + username);
+                    return "LOGIN_ATTEMPTED";
+                } catch (IOException e) {
+                    return "CONNECT_FAILED:" + e.getMessage();
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String result = get();
+
+                    if (result.startsWith("CONNECT_FAILED")) {
+                        String errorMsg = result.split(":", 2)[1];
+                        JOptionPane.showMessageDialog(BlokusClient.this, "서버 연결 실패: " + errorMsg, "연결 오류", JOptionPane.ERROR_MESSAGE);
+                        loginScreen.setLoginControlsEnabled(true, " ");
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    JOptionPane.showMessageDialog(BlokusClient.this, "로그인 중 알 수 없는 오류: " + e.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
+                    loginScreen.setLoginControlsEnabled(true, " ");
+                }
+            }
+        };
+
+        loginWorker.execute();
     }
 
-    private void connect() throws IOException {
+    private void connect(String host, int port) throws IOException {
         cleanupConnection();
-        socket = new Socket(serverHost, serverPort);
-        out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        socket = new Socket(host, port);
+        out = new ObjectOutputStream(socket.getOutputStream());
+        out.flush();
+        in = new ObjectInputStream(socket.getInputStream());
         receiver = new ClientReceiver(in, this);
         receiver.start();
     }
@@ -114,6 +200,10 @@ public class BlokusClient extends JFrame {
         cleanupConnection();
         this.username = null;
         cardLayout.show(mainPanel, "LOGIN");
+
+        if (loginScreen != null) {
+            loginScreen.setLoginControlsEnabled(true, "서버 연결 끊김.");
+        }
     }
 
     public void handleServerMessage(String message) {
@@ -129,10 +219,12 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_LOGIN_SUCCESS:
                         username = loginScreen.getUsername();
                         cardLayout.show(mainPanel, "LOBBY");
+                        loginScreen.setLoginControlsEnabled(true, " ");
                         break;
                     case Protocol.S2C_LOGIN_FAIL:
                         handlingLoginFail = true;
                         JOptionPane.showMessageDialog(BlokusClient.this, "로그인 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
+                        loginScreen.setLoginControlsEnabled(true, "로그인 실패.");
                         break;
 
                     case Protocol.S2C_LEADERBOARD_DATA:
@@ -185,6 +277,10 @@ public class BlokusClient extends JFrame {
                         roomScreen.appendChatMessage(data);
                         gameScreen.appendChatMessage(data);
                         break;
+                    case Protocol.S2C_WHISPER:
+                        roomScreen.appendChatMessage(data, true);
+                        gameScreen.appendChatMessage(data, true);
+                        break;
                     case Protocol.S2C_SYSTEM_MSG:
                         if (data != null && data.contains("로비로")) {
                             cardLayout.show(mainPanel, "LOBBY");
@@ -200,12 +296,21 @@ public class BlokusClient extends JFrame {
     }
 
     public void sendMessage(String msg) {
-        if (out != null) out.println(msg);
+        if (out != null) {
+            try {
+                out.writeObject(msg);
+                out.flush();
+            } catch (IOException e) {
+                System.err.println("C2S Send Error: " + e.getMessage());
+                handleConnectionLost();
+            }
+        }
     }
 
     public String getUsername() { return username; }
 
     public static void main(String[] args) {
+        System.setProperty("file.encoding", "UTF-8");
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -216,10 +321,10 @@ public class BlokusClient extends JFrame {
 }
 
 class ClientReceiver extends Thread {
-    private final BufferedReader in;
+    private final ObjectInputStream in;
     private final BlokusClient client;
 
-    public ClientReceiver(BufferedReader in, BlokusClient client) {
+    public ClientReceiver(ObjectInputStream in, BlokusClient client) {
         this.in = in;
         this.client = client;
     }
@@ -228,9 +333,11 @@ class ClientReceiver extends Thread {
     public void run() {
         try {
             String message;
-            while ((message = in.readLine()) != null) {
+            while ((message = (String) in.readObject()) != null) {
                 client.handleServerMessage(message);
             }
+        } catch (ClassNotFoundException e) {
+            System.err.println("잘못된 객체 수신: " + e.getMessage());
         } catch (IOException e) {
         } finally {
             client.handleConnectionLost();
@@ -240,27 +347,62 @@ class ClientReceiver extends Thread {
 
 class LoginScreen extends JPanel {
     private final BlokusClient client;
-    private final JTextField usernameField;
+
+    final JTextField usernameField;
+    final JButton loginButton;
+    final JLabel statusLabel;
 
     public LoginScreen(BlokusClient client) {
         this.client = client;
-        setLayout(new FlowLayout());
-        add(new JLabel("이름:"));
-        usernameField = new JTextField(12);
-        add(usernameField);
 
-        JButton loginButton = new JButton("접속");
+        setLayout(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        gbc.gridx = 0; gbc.gridy = 0;
+        add(new JLabel("이름:"), gbc);
+
+        gbc.gridx = 1; gbc.gridy = 0;
+        usernameField = new JTextField(15);
+        add(usernameField, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 1;
+        gbc.gridwidth = 2;
+        loginButton = new JButton("접속");
+        add(loginButton, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 2;
+        gbc.gridwidth = 2;
+        statusLabel = new JLabel(" ");
+        statusLabel.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
+        statusLabel.setForeground(Color.GRAY);
+        statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        add(statusLabel, gbc);
+
         loginButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 client.attemptLogin(usernameField.getText());
             }
         });
-        add(loginButton);
+
+        usernameField.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                client.attemptLogin(usernameField.getText());
+            }
+        });
     }
 
     public String getUsername() {
         return usernameField.getText();
+    }
+
+    public void setLoginControlsEnabled(boolean enabled, String status) {
+        this.usernameField.setEnabled(enabled);
+        this.loginButton.setEnabled(enabled);
+        this.statusLabel.setText(status);
     }
 }
 
@@ -268,11 +410,9 @@ class LobbyScreen extends JPanel {
     private final BlokusClient client;
     private final CardLayout cardLayout;
 
-    // 점수판 패널
     private final JTable leaderboardTable;
     private final DefaultTableModel leaderboardModel;
 
-    // 방 목록 패널
     private final JList<String> roomList;
     private final DefaultListModel<String> roomListModel;
 
@@ -284,7 +424,6 @@ class LobbyScreen extends JPanel {
         cardLayout = new CardLayout();
         setLayout(cardLayout);
 
-        // --- 1. 점수판 패널 (기본) ---
         JPanel leaderboardPanel = new JPanel(new BorderLayout());
 
         String[] columnNames = {"순위", "이름", "점수"};
@@ -304,14 +443,8 @@ class LobbyScreen extends JPanel {
 
         leaderboardPanel.add(new JScrollPane(leaderboardTable), BorderLayout.CENTER);
 
-        // --- (1번) 점수판 하단 버튼 수정 ---
         JPanel leaderboardBottomPanel = new JPanel();
 
-        // (1번) '방 만들기' 버튼 제거
-        // JButton createButton = new JButton("방 만들기");
-        // createButton.addActionListener(e -> createRoom());
-
-        // (1번) '방 접속하기' -> '방 목록 / 생성'으로 이름 변경
         JButton showRoomsButton = new JButton("방 목록 / 생성");
         showRoomsButton.addActionListener(new ActionListener() {
             @Override
@@ -328,14 +461,10 @@ class LobbyScreen extends JPanel {
             }
         });
 
-        // leaderboardBottomPanel.add(createButton); // (1번) 제거
         leaderboardBottomPanel.add(showRoomsButton);
         leaderboardBottomPanel.add(refreshLeaderboardButton);
         leaderboardPanel.add(leaderboardBottomPanel, BorderLayout.SOUTH);
-        // ------------------------------
 
-
-        // --- 2. 방 목록 패널 ---
         JPanel roomListPanel = new JPanel(new BorderLayout());
 
         roomListModel = new DefaultListModel<>();
@@ -352,10 +481,8 @@ class LobbyScreen extends JPanel {
 
         roomListPanel.add(new JScrollPane(roomList), BorderLayout.CENTER);
 
-        // --- (1번) 방 목록 하단 버튼 수정 ---
         JPanel roomListBottomPanel = new JPanel();
 
-        // (1번) '방 만들기' 버튼 *추가*
         JButton createButtonInRoomList = new JButton("방 만들기");
         createButtonInRoomList.addActionListener(new ActionListener() {
             @Override
@@ -388,15 +515,12 @@ class LobbyScreen extends JPanel {
             }
         });
 
-        roomListBottomPanel.add(createButtonInRoomList); // (1번) 추가
+        roomListBottomPanel.add(createButtonInRoomList);
         roomListBottomPanel.add(joinButton);
         roomListBottomPanel.add(refreshRoomsButton);
         roomListBottomPanel.add(backButton);
         roomListPanel.add(roomListBottomPanel, BorderLayout.SOUTH);
-        // ------------------------------
 
-
-        // --- 패널 추가 ---
         this.add(leaderboardPanel, LEADERBOARD_PANEL);
         this.add(roomListPanel, ROOM_LIST_PANEL);
 
@@ -490,6 +614,7 @@ class RoomScreen extends JPanel {
     private Style styleBlue;
     private Style styleYellow;
     private Style styleGreen;
+    private Style styleWhisper;
 
     public RoomScreen(BlokusClient client) {
         this.client = client;
@@ -534,6 +659,10 @@ class RoomScreen extends JPanel {
         styleGreen = systemArea.addStyle("Green", styleDefault);
         StyleConstants.setForeground(styleGreen, Color.GREEN.darker());
         StyleConstants.setBold(styleGreen, true);
+
+        styleWhisper = systemArea.addStyle("Whisper", styleDefault);
+        StyleConstants.setForeground(styleWhisper, Color.MAGENTA);
+        StyleConstants.setItalic(styleWhisper, true);
 
         chatTabs.addTab("시스템", new JScrollPane(systemArea));
 
@@ -599,18 +728,47 @@ class RoomScreen extends JPanel {
 
     private void sendChat() {
         String message = chatField.getText();
-        if (!message.trim().isEmpty()) {
-            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
-            chatField.setText("");
+        if (message.trim().isEmpty()) {
+            return;
         }
+
+        if (message.startsWith("/")) {
+            String[] parts = message.split(" ", 3);
+            String command = parts[0].toLowerCase();
+
+            if (command.equals("/r")) {
+                if (parts.length == 3 && !parts[1].trim().isEmpty() && !parts[2].trim().isEmpty()) {
+                    client.sendMessage(Protocol.C2S_WHISPER + ":" + parts[1] + ":" + parts[2]);
+                } else if (parts.length < 2) {
+                    appendChatMessage("[시스템]: 귓속말 사용법: /r [닉네임] [메세지]");
+                } else if (parts.length == 2) {
+                    appendChatMessage("[시스템]: 귓속말할 메세지를 입력해야 합니다.");
+                } else {
+                    appendChatMessage("[시스템]: 귓속말 사용법: /r [닉네임] [메세지]");
+                }
+            } else {
+                appendChatMessage("[시스템]: 알 수 없는 명령어입니다. (사용 가능: /r)");
+            }
+        } else {
+            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
+        }
+        chatField.setText("");
     }
 
     public void appendChatMessage(String data) {
-        String message = data.replaceFirst(":", ": ");
+        appendChatMessage(data, false);
+    }
 
-        if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
-            StyledDocument doc = systemArea.getStyledDocument();
-            try {
+    public void appendChatMessage(String data, boolean isWhisper) {
+        String message = data.replaceFirst(":", ": ");
+        StyledDocument doc = systemArea.getStyledDocument();
+
+        try {
+            if (isWhisper) {
+                doc.insertString(doc.getLength(), message + "\n", styleWhisper);
+                systemArea.setCaretPosition(systemArea.getDocument().getLength());
+                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
+            } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
                     doc.insertString(doc.getLength(), parts[0] + "→ ", styleDefault);
@@ -637,14 +795,15 @@ class RoomScreen extends JPanel {
                 } else {
                     doc.insertString(doc.getLength(), message + "\n", styleDefault);
                 }
-            } catch (BadLocationException e) {
-                // e.printStackTrace();
-            }
-            systemArea.setCaretPosition(systemArea.getDocument().getLength());
+                systemArea.setCaretPosition(systemArea.getDocument().getLength());
+                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
-        } else {
-            chatArea.append(message + "\n");
-            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+            } else {
+                chatArea.append(message + "\n");
+                chatArea.setCaretPosition(chatArea.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatArea.getParent().getParent());
+            }
+        } catch (Exception e) {
         }
     }
 

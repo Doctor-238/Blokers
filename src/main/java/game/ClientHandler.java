@@ -1,18 +1,22 @@
 package game;
 
 import java.io.BufferedReader;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 
 public class ClientHandler extends Thread {
     private Socket socket;
     private BlokusServer server;
-    private PrintWriter out;
-    private BufferedReader in;
+    private ObjectOutputStream out;
+    private ObjectInputStream in;
 
     private String username;
     private GameRoom currentRoom;
@@ -26,17 +30,22 @@ public class ClientHandler extends Thread {
     @Override
     public void run() {
         try {
-            in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-            out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
+            out = new ObjectOutputStream(socket.getOutputStream());
+            out.flush();
+            in = new ObjectInputStream(socket.getInputStream());
 
             String message;
-            while ((message = in.readLine()) != null) {
+            while ((message = (String) in.readObject()) != null) {
                 System.out.println((username != null ? username : "???") + " (C2S): " + message);
                 handleMessage(message);
             }
 
-        } catch (IOException e) {
+        } catch (SocketException | EOFException e) {
             System.out.println((username != null ? username : "Socket") + " 연결 종료.");
+        } catch (IOException e) {
+            System.out.println((username != null ? username : "Socket") + " IO 오류: " + e.getMessage());
+        } catch (ClassNotFoundException e) {
+            System.err.println("알 수 없는 객체 수신: " + e.getMessage());
         } finally {
             cleanup();
         }
@@ -58,12 +67,12 @@ public class ClientHandler extends Thread {
                     handleLegacyLogin(data);
                     break;
 
-                case Protocol.C2S_GET_LEADERBOARD: // (1번) 추가
+                case Protocol.C2S_GET_LEADERBOARD:
                     server.sendLeaderboard(this);
                     break;
 
-                case Protocol.C2S_GET_ROOM_LIST: // (1번) 수정
-                    server.sendRoomList(this); // 요청한 사람에게만 전송
+                case Protocol.C2S_GET_ROOM_LIST:
+                    server.sendRoomList(this);
                     break;
                 case Protocol.C2S_CREATE_ROOM:
                     handleCreateRoom(data);
@@ -87,7 +96,6 @@ public class ClientHandler extends Thread {
                     handlePassTurn();
                     break;
 
-                // (기권) C2S_RESIGN_COLOR 처리
                 case Protocol.C2S_RESIGN_COLOR:
                     if (currentRoom != null) {
                         currentRoom.handleResignColor(this, data);
@@ -95,6 +103,13 @@ public class ClientHandler extends Thread {
                     break;
                 case Protocol.C2S_CHAT:
                     handleChat(data);
+                    break;
+
+                case Protocol.C2S_WHISPER:
+                    String[] whisperParts = data.split(":", 2);
+                    if (whisperParts.length == 2) {
+                        server.sendWhisper(this, whisperParts[0], whisperParts[1]);
+                    }
                     break;
 
                 default:
@@ -121,7 +136,7 @@ public class ClientHandler extends Thread {
         this.username = usernameRaw;
         this.authenticated = true;
         sendMessage(Protocol.S2C_LOGIN_SUCCESS);
-        server.addClientToLobby(this); // (1번) 이 메서드가 이제 점수판을 전송함
+        server.addClientToLobby(this);
     }
 
     private void handleCreateRoom(String roomName) {
@@ -203,7 +218,16 @@ public class ClientHandler extends Thread {
     }
 
     public void sendMessage(String message) {
-        out.println(message);
+        if (out != null) {
+            try {
+                out.writeObject(message);
+                out.flush();
+                System.out.println("Server (S2C to " + (username != null ? username : "???") + "): " + message);
+            } catch (IOException e) {
+                System.err.println("S2C Send Error to " + username + ": " + e.getMessage());
+                cleanup();
+            }
+        }
     }
 
     private void cleanup() {
