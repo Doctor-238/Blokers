@@ -751,10 +751,6 @@ public class GameRoom implements Serializable {
                     }
                 }
 
-                if (isPlayerTimedOut(player)) {
-                    score = 999;
-                }
-
                 scores.put(player, score);
             }
 
@@ -797,8 +793,15 @@ public class GameRoom implements Serializable {
 
                     scoreChanges.put(p.getUsername(), pointChange);
 
+                    String scoreDisplay;
+                    if (s == 999) {
+                        scoreDisplay = "오류";
+                    } else {
+                        scoreDisplay = s + "점";
+                    }
+
                     rankStr.append((i + 1)).append("등: ").append(p.getUsername()).append(" (")
-                            .append(s == 999 ? "기권" : s).append("점 / ").append(pointChange > 0 ? "+" : "")
+                            .append(scoreDisplay).append(" / ").append(pointChange > 0 ? "+" : "")
                             .append(pointChange).append("점) | ");
                 }
                 resultMessage = rankStr.toString();

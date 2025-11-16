@@ -63,7 +63,7 @@ public class GameScreen extends JPanel {
     private JLabel[] timerLabels = new JLabel[4];
 
     private JTabbedPane chatTabs;
-    private JTextArea chatArea;
+    private JTextPane chatAreaPane; // JTextArea -> JTextPane
     private JTextPane systemArea;
     private JTextField chatField;
 
@@ -73,6 +73,10 @@ public class GameScreen extends JPanel {
     private Style styleYellow;
     private Style styleGreen;
     private Style styleWhisper;
+
+    // Styles for the main chat pane
+    private Style styleChatDefault;
+    private Style styleChatWhisper;
 
     private MouseAdapter backgroundClickListener = new MouseAdapter() {
         @Override
@@ -187,7 +191,7 @@ public class GameScreen extends JPanel {
         southPanel.addMouseListener(backgroundClickListener);
 
         JPanel southTopPanel = new JPanel(new BorderLayout(10, 5));
-        toggleColorButton = new JButton("블록 전환 (Shift)");
+        toggleColorButton = new JButton("블록 전환 (e)");
         toggleColorButton.setVisible(false);
         toggleColorButton.addActionListener(new ActionListener() {
             @Override
@@ -218,10 +222,20 @@ public class GameScreen extends JPanel {
         JPanel chatPanel = new JPanel(new BorderLayout());
         chatTabs = new JTabbedPane();
 
-        chatArea = new JTextArea();
-        chatArea.setEditable(false);
-        chatArea.setLineWrap(true);
-        chatTabs.addTab("채팅", new JScrollPane(chatArea));
+        // JTextArea -> JTextPane
+        chatAreaPane = new JTextPane();
+        chatAreaPane.setEditable(false);
+        StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+        styleChatDefault = chatAreaPane.addStyle("ChatDefault", null);
+        StyleConstants.setForeground(styleChatDefault, Color.BLACK);
+        StyleConstants.setFontFamily(styleChatDefault, "맑은 고딕");
+        StyleConstants.setFontSize(styleChatDefault, 12);
+
+        styleChatWhisper = chatAreaPane.addStyle("ChatWhisper", styleChatDefault);
+        StyleConstants.setForeground(styleChatWhisper, Color.MAGENTA);
+        StyleConstants.setItalic(styleChatWhisper, true);
+
+        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane)); // Add new pane
 
         systemArea = new JTextPane();
         systemArea.setEditable(false);
@@ -306,7 +320,9 @@ public class GameScreen extends JPanel {
             }
         });
 
-        im.put(KeyStroke.getKeyStroke("shift"), "toggleAction");
+        im.put(KeyStroke.getKeyStroke('e'), "toggleAction");
+        im.put(KeyStroke.getKeyStroke('E'), "toggleAction");
+        im.put(KeyStroke.getKeyStroke('ㄷ'), "toggleAction");
         am.put("toggleAction", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -865,6 +881,11 @@ public class GameScreen extends JPanel {
     private void attemptPlaceBlock() {
         if (selectedPiece == null || amISpectating) return;
 
+        if (resignedColors.contains(selectedPiece.getColor())) {
+            deselectPiece();
+            return;
+        }
+
         if (isPeerlessMode) {
             if (isGhostValid) {
                 String message = String.format("%s:%s:%d:%d:%d:%d",
@@ -1009,6 +1030,8 @@ public class GameScreen extends JPanel {
             resignedColors.add(colorToRemove);
             myActiveColors.remove(colorToRemove);
 
+            handPanel.repaint(); // Repaint hand to show resigned overlay
+
             if (myActiveColors.isEmpty() && !amISpectating && !isGameFinished) {
                 setSpectateMode(true); // Auto-spectate, no popup
             }
@@ -1021,14 +1044,18 @@ public class GameScreen extends JPanel {
 
     public void appendChatMessage(String data, boolean isWhisper) {
         String message = data.replaceFirst(":", ": ");
-        StyledDocument doc = systemArea.getStyledDocument();
 
         try {
             if (isWhisper) {
-                doc.insertString(doc.getLength(), message + "\n", styleWhisper);
-                systemArea.setCaretPosition(systemArea.getDocument().getLength());
-                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
+                // Add to main chat pane with whisper style
+                StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+                chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatWhisper);
+                chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
+
             } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+                // Add to system pane
+                StyledDocument doc = systemArea.getStyledDocument();
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
                     doc.insertString(doc.getLength(), parts[0] + "→ ", styleDefault);
@@ -1064,16 +1091,18 @@ public class GameScreen extends JPanel {
                 chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
             } else {
-                chatArea.append(message + "\n");
-                chatArea.setCaretPosition(chatArea.getDocument().getLength());
-                chatTabs.setSelectedComponent(chatArea.getParent().getParent());
+                // Add regular chat to main chat pane
+                StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+                chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatDefault);
+                chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
             }
         } catch (Exception e) {
         }
     }
 
     public void clearChat() {
-        chatArea.setText("");
+        chatAreaPane.setText("");
         systemArea.setText("");
     }
 
@@ -1391,18 +1420,19 @@ public class GameScreen extends JPanel {
                 active = (pieceToDraw.getColor() == currentTurnColor);
             }
 
-            if (isResigned || !active || amISpectating) {
+            if (isResigned) {
+                active = false;
+            }
+
+            if (!active || amISpectating) {
                 boolean displayActive = (pieceToDraw.getColor() == inventoryDisplayColor);
 
-                if (isResigned) {
-                    g.setColor(new Color(128, 128, 128, 180));
+                if (amISpectating && displayActive) {
+                    // Spectator looking at their own inventory, don't dim
+                } else {
+                    // Dim if spectating (not own inventory) OR if piece is not active (resigned or not turn)
+                    g.setColor(new Color(255, 255, 255, 180));
                     g.fillRect(0, 0, getWidth(), getHeight());
-                } else if (amISpectating || !active) {
-                    if (amISpectating && displayActive) {
-                    } else {
-                        g.setColor(new Color(255, 255, 255, 180));
-                        g.fillRect(0, 0, getWidth(), getHeight());
-                    }
                 }
             }
         }

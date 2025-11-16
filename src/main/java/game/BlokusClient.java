@@ -658,7 +658,7 @@ class RoomScreen extends JPanel {
     private final JButton kickButton;
 
     private JTabbedPane chatTabs;
-    private JTextArea chatArea;
+    private JTextPane chatAreaPane; // JTextArea -> JTextPane
     private JTextPane systemArea;
     private final JTextField chatField;
 
@@ -670,6 +670,10 @@ class RoomScreen extends JPanel {
     private Style styleYellow;
     private Style styleGreen;
     private Style styleWhisper;
+
+    // Styles for the main chat pane
+    private Style styleChatDefault;
+    private Style styleChatWhisper_Room;
 
     public RoomScreen(BlokusClient client) {
         this.client = client;
@@ -685,10 +689,21 @@ class RoomScreen extends JPanel {
         JPanel chatPanel = new JPanel(new BorderLayout());
         chatTabs = new JTabbedPane();
 
-        chatArea = new JTextArea();
-        chatArea.setEditable(false);
-        chatArea.setLineWrap(true);
-        chatTabs.addTab("채팅", new JScrollPane(chatArea));
+        // JTextArea -> JTextPane
+        chatAreaPane = new JTextPane();
+        chatAreaPane.setEditable(false);
+        StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+        styleChatDefault = chatAreaPane.addStyle("ChatDefault", null);
+        StyleConstants.setForeground(styleChatDefault, Color.BLACK);
+        StyleConstants.setFontFamily(styleChatDefault, "맑은 고딕");
+        StyleConstants.setFontSize(styleChatDefault, 12);
+
+        styleChatWhisper_Room = chatAreaPane.addStyle("ChatWhisper", styleChatDefault);
+        StyleConstants.setForeground(styleChatWhisper_Room, Color.MAGENTA);
+        StyleConstants.setItalic(styleChatWhisper_Room, true);
+
+        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane)); // Add new pane
+
 
         systemArea = new JTextPane();
         systemArea.setEditable(false);
@@ -816,14 +831,18 @@ class RoomScreen extends JPanel {
 
     public void appendChatMessage(String data, boolean isWhisper) {
         String message = data.replaceFirst(":", ": ");
-        StyledDocument doc = systemArea.getStyledDocument();
 
         try {
             if (isWhisper) {
-                doc.insertString(doc.getLength(), message + "\n", styleWhisper);
-                systemArea.setCaretPosition(systemArea.getDocument().getLength());
-                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
+                // Add to main chat pane with whisper style
+                StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+                chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatWhisper_Room);
+                chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
+
             } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+                // Add to system pane
+                StyledDocument doc = systemArea.getStyledDocument();
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
                     doc.insertString(doc.getLength(), parts[0] + "→ ", styleDefault);
@@ -854,16 +873,18 @@ class RoomScreen extends JPanel {
                 chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
             } else {
-                chatArea.append(message + "\n");
-                chatArea.setCaretPosition(chatArea.getDocument().getLength());
-                chatTabs.setSelectedComponent(chatArea.getParent().getParent());
+                // Add regular chat to main chat pane
+                StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+                chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatDefault);
+                chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
             }
         } catch (Exception e) {
         }
     }
 
     public void clearChat() {
-        chatArea.setText("");
+        chatAreaPane.setText("");
         systemArea.setText("");
     }
 
