@@ -305,6 +305,7 @@ public class BlokusClient extends JFrame {
                         break;
 
                     case Protocol.S2C_GAME_OVER:
+                        gameScreen.setGameFinished(true);
                         JOptionPane.showMessageDialog(BlokusClient.this, "게임 종료!\n" + data, "게임 종료", JOptionPane.INFORMATION_MESSAGE);
                         cardLayout.show(mainPanel, "LOBBY");
                         sendMessage(Protocol.C2S_GET_LEADERBOARD);

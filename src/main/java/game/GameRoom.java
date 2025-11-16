@@ -680,22 +680,30 @@ public class GameRoom implements Serializable {
     private boolean checkGameOver() {
         int activeColors = 0;
         for (int i = 1; i <= 4; i++) {
-            if (!isTimedOut.get(i)) {
-
-                boolean colorInPlay = false;
-                for (int[] colors : playerColors.values()) {
-                    for (int c : colors) {
-                        if (c == i) {
-                            colorInPlay = true;
-                            break;
-                        }
+            boolean colorInPlay = false;
+            for (int[] colors : playerColors.values()) {
+                for (int c : colors) {
+                    if (c == i) {
+                        colorInPlay = true;
+                        break;
                     }
                 }
-                if (colorInPlay) activeColors++;
+            }
+            if (colorInPlay && !isTimedOut.get(i)) {
+                activeColors++;
             }
         }
+
         if (activeColors == 0) return true;
-        if (gameMode == GameMode.CLASSIC && passCount >= activeColors) return true;
+
+        if (gameMode == GameMode.CLASSIC) {
+            if (playerCountOnStart == 4) {
+                if (passCount >= activeColors) return true;
+            } else if (playerCountOnStart == 2) {
+                if (passCount >= 4) return true;
+            }
+        }
+
         return false;
     }
 
