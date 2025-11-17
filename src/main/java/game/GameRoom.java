@@ -386,7 +386,7 @@ public class GameRoom implements Serializable {
         }
 
         if (isTimedOut.get(colorToPlace)) {
-            player.sendMessage(Protocol.S2C_PEERLESS_PLACE_FAIL + ":이미 탈락한 색상입니다.");
+            player.sendMessage(Protocol.S2C_PEERLESS_PLACE_FAIL + ":이미 점수가 확정된 색상입니다.");
             return;
         }
 
@@ -477,7 +477,7 @@ public class GameRoom implements Serializable {
             int colorToResign = Integer.parseInt(data);
 
             if (colorToResign != currentTurnColor) {
-                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":현재 턴의 색상만 탈락할 수 있습니다.");
+                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":현재 턴의 색상만 점수를 확정할 수 있습니다.");
                 return;
             }
 
@@ -489,7 +489,7 @@ public class GameRoom implements Serializable {
 
             if (!isTimedOut.get(colorToResign)) {
                 isTimedOut.put(colorToResign, true);
-                broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색이 탈락했습니다.");
+                broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색의 점수가 확정되었습니다.");
             }
 
             handlePassTurn(null);
@@ -508,7 +508,7 @@ public class GameRoom implements Serializable {
             for (int c : colors) {
                 if (!isTimedOut.get(c)) {
                     isTimedOut.put(c, true);
-                    broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " (" + player.getUsername() + ") 색이 탈락했습니다.");
+                    broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " (" + player.getUsername() + ") 님의 점수가 확정되었습니다.");
                 }
             }
         }
@@ -526,7 +526,7 @@ public class GameRoom implements Serializable {
             for (int c : colors) {
                 if (!isTimedOut.get(c)) {
                     isTimedOut.put(c, true);
-                    broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " 색이 탈락했습니다 (" + reason + ")");
+                    broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " 색이 연결 종료되어 점수가 확정되었습니다.");
                 }
             }
         }
@@ -605,7 +605,7 @@ public class GameRoom implements Serializable {
         }
     }
 
-    private void advanceTurn() {
+    private synchronized void advanceTurn() {
         if (gameMode == GameMode.PEERLESS) return;
 
         if (currentTimerTask != null) {
@@ -624,6 +624,12 @@ public class GameRoom implements Serializable {
                 return;
             }
         } while (isTimedOut.get(currentTurnColor));
+
+        if (!hasPiecesRemaining(currentTurnColor)) {
+            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님이 블록을 모두 소진하여 턴이 자동으로 넘어갑니다.");
+            handlePassTurn(null);
+            return;
+        }
 
         int newTime = remainingTime.get(currentTurnColor) + CLASSIC_TIME_BONUS_SECONDS;
         remainingTime.put(currentTurnColor, newTime);
@@ -652,7 +658,7 @@ public class GameRoom implements Serializable {
 
                     if (time <= 0) {
                         isTimedOut.put(currentTurnColor, true);
-                        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 강제로 넘어갑니다.");
+                        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 점수가 확정되고 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
                         handlePassTurn(null);
                         this.cancel();
@@ -744,7 +750,7 @@ public class GameRoom implements Serializable {
                 if (hand == null) {
                     score = 999;
                 } else if (hand.isEmpty()) {
-                    score = -15;
+                    score = 0;
                 } else {
                     for (BlokusPiece piece : hand) {
                         score += piece.getSize();
@@ -942,6 +948,20 @@ public class GameRoom implements Serializable {
                 playerHands.put(player, hand);
             }
         }
+    }
+
+    private boolean hasPiecesRemaining(int color) {
+        ClientHandler player = getPlayerByColor(color);
+        if (player == null) return false;
+        List<BlokusPiece> hand = playerHands.get(player);
+        if (hand == null) return false;
+
+        for (BlokusPiece piece : hand) {
+            if (piece.getColor() == color) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public int getRoomId() { return roomId; }

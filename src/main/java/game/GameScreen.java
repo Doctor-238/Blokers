@@ -50,6 +50,7 @@ public class GameScreen extends JPanel {
 
     private OutlineLabel turnLabel;
     private JButton toggleColorButton;
+    private JButton deselectButton;
     private JButton rotateButton;
     private JButton passButton;
     private JButton resignButton;
@@ -158,7 +159,7 @@ public class GameScreen extends JPanel {
             }
         });
 
-        resignButton = new JButton("탈락하기 (Esc)");
+        resignButton = new JButton("점수 확정 (Esc)");
         resignButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -191,6 +192,10 @@ public class GameScreen extends JPanel {
         southPanel.addMouseListener(backgroundClickListener);
 
         JPanel southTopPanel = new JPanel(new BorderLayout(10, 5));
+
+        JPanel southWestButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        southWestButtons.setOpaque(false);
+
         toggleColorButton = new JButton("블록 전환 (e)");
         toggleColorButton.setVisible(false);
         toggleColorButton.addActionListener(new ActionListener() {
@@ -199,7 +204,18 @@ public class GameScreen extends JPanel {
                 toggleInventoryColor();
             }
         });
-        southTopPanel.add(toggleColorButton, BorderLayout.WEST);
+        southWestButtons.add(toggleColorButton);
+
+        deselectButton = new JButton("선택 취소 (q)");
+        deselectButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                deselectPiece();
+            }
+        });
+        southWestButtons.add(deselectButton);
+
+        southTopPanel.add(southWestButtons, BorderLayout.WEST);
 
         scoreLabel = new JLabel("남은 점수: 89");
         scoreLabel.setFont(new Font("맑은 고딕", Font.BOLD, 14));
@@ -298,6 +314,7 @@ public class GameScreen extends JPanel {
         passButton.setFocusable(false);
         resignButton.setFocusable(false);
         toggleColorButton.setFocusable(false);
+        deselectButton.setFocusable(false);
         sendButton.setFocusable(false);
 
         setupKeyBindings();
@@ -328,6 +345,18 @@ public class GameScreen extends JPanel {
             public void actionPerformed(ActionEvent e) {
                 if (!chatField.isFocusOwner()) {
                     toggleInventoryColor();
+                }
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke('q'), "deselectAction");
+        im.put(KeyStroke.getKeyStroke('Q'), "deselectAction");
+        im.put(KeyStroke.getKeyStroke('ㅂ'), "deselectAction");
+        am.put("deselectAction", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) {
+                    deselectPiece();
                 }
             }
         });
@@ -390,7 +419,7 @@ public class GameScreen extends JPanel {
     public void initializeGame(String data) {
         this.isPeerlessMode = false;
         this.isGameFinished = false;
-        resignButton.setText("탈락하기 (Esc)");
+        resignButton.setText("점수 확정 (Esc)");
         passButton.setVisible(true);
         turnInfoPanel.setVisible(true);
         turnBlockAndTimer.setVisible(true);
@@ -452,7 +481,7 @@ public class GameScreen extends JPanel {
     public void initializePeerlessGame(String data) {
         this.isPeerlessMode = true;
         this.isGameFinished = false;
-        resignButton.setText("탈락하기 (Esc)");
+        resignButton.setText("점수 확정 (Esc)");
         passButton.setVisible(false);
         turnInfoPanel.setVisible(true);
         turnBlockAndTimer.setVisible(false);
@@ -513,7 +542,7 @@ public class GameScreen extends JPanel {
         }
 
         int result = JOptionPane.showConfirmDialog(this,
-                "정말 탈락하시겠습니까?", "탈락 확인", JOptionPane.YES_NO_OPTION);
+                "정말 점수를 확정하시겠습니까?\n이 색상으로는 더 이상 블록을 놓을 수 없습니다.", "점수 확정 확인", JOptionPane.YES_NO_OPTION);
 
         if (result == JOptionPane.YES_OPTION) {
             if (isPeerlessMode) {
@@ -624,7 +653,7 @@ public class GameScreen extends JPanel {
             toggleColorButton.setEnabled(myColors.length > 1);
             toggleColorButton.setVisible(myColors.length > 1);
         } else {
-            resignButton.setText("탈락하기 (Esc)");
+            resignButton.setText("점수 확정 (Esc)");
             rotateButton.setEnabled(true);
             toggleColorButton.setEnabled(myColors.length > 1);
             toggleColorButton.setVisible(myColors.length > 1);
@@ -879,12 +908,14 @@ public class GameScreen extends JPanel {
     }
 
     private void attemptPlaceBlock() {
-        if (selectedPiece == null || amISpectating) return;
+        if (selectedPiece == null) return;
 
         if (resignedColors.contains(selectedPiece.getColor())) {
             deselectPiece();
             return;
         }
+
+        if (amISpectating) return;
 
         if (isPeerlessMode) {
             if (isGhostValid) {
@@ -1083,7 +1114,7 @@ public class GameScreen extends JPanel {
                     doc.insertString(doc.getLength(), message + "\n", styleDefault);
                 }
 
-                if (message.contains("탈락했습니다") || message.contains("시간이 초과되어") || message.contains("기권했습니다")) {
+                if (message.contains("점수가 확정") || message.contains("시간이 초과되어")) {
                     parseColorOut(message);
                 }
 
