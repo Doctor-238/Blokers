@@ -6,6 +6,8 @@ import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -63,8 +65,16 @@ public class GameScreen extends JPanel {
 
     private JLabel[] timerLabels = new JLabel[4];
 
+    // 채팅 관련 필드
+    private JLayeredPane chatPanel; // 레이어드 팬으로 변경
+    private JPanel chatContentPanel; // 실제 채팅 탭과 내용을 담을 패널
+    private JButton chatFoldButton; // 접기/펴기 버튼
+    private boolean isChatExpanded = true;
+    private static final int CHAT_EXPANDED_WIDTH = 220; // 너비를 250 -> 220으로 줄임
+    private static final int CHAT_COLLAPSED_WIDTH = 30;
+
     private JTabbedPane chatTabs;
-    private JTextPane chatAreaPane; // JTextArea -> JTextPane
+    private JTextPane chatAreaPane;
     private JTextPane systemArea;
     private JTextField chatField;
 
@@ -75,7 +85,6 @@ public class GameScreen extends JPanel {
     private Style styleGreen;
     private Style styleWhisper;
 
-    // Styles for the main chat pane
     private Style styleChatDefault;
     private Style styleChatWhisper;
 
@@ -90,6 +99,10 @@ public class GameScreen extends JPanel {
 
     public GameScreen(BlokusClient client) {
         this.client = client;
+
+        // 한글 입력 시 IME(문자열 마무리 창)가 뜨지 않도록 설정
+        this.enableInputMethods(false);
+
         setLayout(new BorderLayout(10, 10));
         setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
@@ -184,6 +197,8 @@ public class GameScreen extends JPanel {
         };
         boardPanel.setPreferredSize(new Dimension(BOARD_PANEL_SIZE, BOARD_PANEL_SIZE));
         boardPanel.setBackground(Color.LIGHT_GRAY);
+        // 보드 패널에서도 IME 비활성화
+        boardPanel.enableInputMethods(false);
 
         addMouseListeners();
         add(boardPanel, BorderLayout.CENTER);
@@ -227,6 +242,8 @@ public class GameScreen extends JPanel {
         handPanel = new JPanel(new WrapLayout(WrapLayout.LEFT, 5, 5));
         handPanel.setBackground(Color.WHITE);
         handPanel.addMouseListener(backgroundClickListener);
+        // 핸드 패널에서도 IME 비활성화
+        handPanel.enableInputMethods(false);
 
         handScrollPane = new JScrollPane(handPanel);
         handScrollPane.setPreferredSize(new Dimension(800, 160));
@@ -235,10 +252,15 @@ public class GameScreen extends JPanel {
         southPanel.add(handScrollPane, BorderLayout.CENTER);
         add(southPanel, BorderLayout.SOUTH);
 
-        JPanel chatPanel = new JPanel(new BorderLayout());
+        // --- 채팅 패널 구성 시작 ---
+        chatPanel = new JLayeredPane();
+        chatPanel.setPreferredSize(new Dimension(CHAT_EXPANDED_WIDTH, 0));
+
+        // 채팅 내용 패널 (기존 채팅 UI)
+        chatContentPanel = new JPanel(new BorderLayout());
+
         chatTabs = new JTabbedPane();
 
-        // JTextArea -> JTextPane
         chatAreaPane = new JTextPane();
         chatAreaPane.setEditable(false);
         StyledDocument chatDoc = chatAreaPane.getStyledDocument();
@@ -251,7 +273,7 @@ public class GameScreen extends JPanel {
         StyleConstants.setForeground(styleChatWhisper, Color.MAGENTA);
         StyleConstants.setItalic(styleChatWhisper, true);
 
-        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane)); // Add new pane
+        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane));
 
         systemArea = new JTextPane();
         systemArea.setEditable(false);
@@ -284,10 +306,11 @@ public class GameScreen extends JPanel {
 
         chatTabs.addTab("시스템", new JScrollPane(systemArea));
 
-        chatPanel.add(chatTabs, BorderLayout.CENTER);
+        chatContentPanel.add(chatTabs, BorderLayout.CENTER);
 
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
+        // 채팅창은 IME를 켜두어야 한글 입력이 가능합니다
         chatField.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -303,13 +326,50 @@ public class GameScreen extends JPanel {
         });
         chatInputPanel.add(chatField, BorderLayout.CENTER);
         chatInputPanel.add(sendButton, BorderLayout.EAST);
-        chatPanel.add(chatInputPanel, BorderLayout.SOUTH);
+        chatContentPanel.add(chatInputPanel, BorderLayout.SOUTH);
 
-        chatPanel.setPreferredSize(new Dimension(220, 0));
+        // 접기/펴기 버튼 생성
+        chatFoldButton = new JButton("◀");
+        chatFoldButton.setFont(new Font("Dialog", Font.BOLD, 10));
+        chatFoldButton.setMargin(new Insets(0, 0, 0, 0));
+        chatFoldButton.setFocusable(false);
+        chatFoldButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                toggleChat();
+            }
+        });
+
+        // JLayeredPane에 컴포넌트 추가
+        chatPanel.add(chatContentPanel, JLayeredPane.DEFAULT_LAYER);
+        chatPanel.add(chatFoldButton, JLayeredPane.PALETTE_LAYER);
+
+        // 리사이즈 리스너: 컴포넌트 위치 및 크기 수동 관리
+        chatPanel.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                int w = chatPanel.getWidth();
+                int h = chatPanel.getHeight();
+                int btnSize = 22;
+
+                if (isChatExpanded) {
+                    chatContentPanel.setVisible(true);
+                    chatContentPanel.setBounds(0, 0, w, h);
+                    // 버튼을 우측 상단 (탭바 옆 빈 공간)에 배치
+                    chatFoldButton.setBounds(w - btnSize - 2, 2, btnSize, btnSize);
+                    chatFoldButton.setText("◀");
+                } else {
+                    chatContentPanel.setVisible(false);
+                    // 접혔을 때는 버튼이 패널 전체 너비를 차지하거나 중앙에 위치
+                    chatFoldButton.setBounds(2, 2, w - 4, btnSize);
+                    chatFoldButton.setText("▶");
+                }
+            }
+        });
 
         add(chatPanel, BorderLayout.WEST);
+        // --- 채팅 패널 구성 끝 ---
 
-        // 버튼 포커스 비활성화 (스페이스바 문제 해결)
         rotateButton.setFocusable(false);
         passButton.setFocusable(false);
         resignButton.setFocusable(false);
@@ -318,6 +378,17 @@ public class GameScreen extends JPanel {
         sendButton.setFocusable(false);
 
         setupKeyBindings();
+    }
+
+    private void toggleChat() {
+        isChatExpanded = !isChatExpanded;
+        if (isChatExpanded) {
+            chatPanel.setPreferredSize(new Dimension(CHAT_EXPANDED_WIDTH, 0));
+        } else {
+            chatPanel.setPreferredSize(new Dimension(CHAT_COLLAPSED_WIDTH, 0));
+        }
+        revalidate();
+        repaint();
     }
 
     private void setupKeyBindings() {
@@ -361,6 +432,18 @@ public class GameScreen extends JPanel {
             }
         });
 
+        im.put(KeyStroke.getKeyStroke('c'), "memoAction");
+        im.put(KeyStroke.getKeyStroke('C'), "memoAction");
+        im.put(KeyStroke.getKeyStroke('ㅊ'), "memoAction");
+        am.put("memoAction", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner() && selectedPanel != null) {
+                    selectedPanel.toggleMemo();
+                }
+            }
+        });
+
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "placeAction");
         am.put("placeAction", new AbstractAction() {
             @Override
@@ -383,12 +466,19 @@ public class GameScreen extends JPanel {
 
         im.put(KeyStroke.getKeyStroke('w'), "navigateUp");
         im.put(KeyStroke.getKeyStroke('W'), "navigateUp");
+        im.put(KeyStroke.getKeyStroke('ㅈ'), "navigateUp");
+
         im.put(KeyStroke.getKeyStroke('a'), "navigateLeft");
         im.put(KeyStroke.getKeyStroke('A'), "navigateLeft");
+        im.put(KeyStroke.getKeyStroke('ㅁ'), "navigateLeft");
+
         im.put(KeyStroke.getKeyStroke('s'), "navigateDown");
         im.put(KeyStroke.getKeyStroke('S'), "navigateDown");
+        im.put(KeyStroke.getKeyStroke('ㄴ'), "navigateDown");
+
         im.put(KeyStroke.getKeyStroke('d'), "navigateRight");
         im.put(KeyStroke.getKeyStroke('D'), "navigateRight");
+        im.put(KeyStroke.getKeyStroke('ㅇ'), "navigateRight");
 
         am.put("navigateUp", new AbstractAction() {
             @Override
@@ -530,7 +620,7 @@ public class GameScreen extends JPanel {
             deselectPiece();
         }
 
-        updateButtonStates(); // Update buttons based on new state
+        updateButtonStates();
         handPanel.repaint();
     }
 
@@ -1061,10 +1151,10 @@ public class GameScreen extends JPanel {
             resignedColors.add(colorToRemove);
             myActiveColors.remove(colorToRemove);
 
-            handPanel.repaint(); // Repaint hand to show resigned overlay
+            handPanel.repaint();
 
             if (myActiveColors.isEmpty() && !amISpectating && !isGameFinished) {
-                setSpectateMode(true); // Auto-spectate, no popup
+                setSpectateMode(true);
             }
         }
     }
@@ -1078,14 +1168,12 @@ public class GameScreen extends JPanel {
 
         try {
             if (isWhisper) {
-                // Add to main chat pane with whisper style
                 StyledDocument chatDoc = chatAreaPane.getStyledDocument();
                 chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatWhisper);
                 chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
                 chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
 
             } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
-                // Add to system pane
                 StyledDocument doc = systemArea.getStyledDocument();
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
@@ -1122,7 +1210,6 @@ public class GameScreen extends JPanel {
                 chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
             } else {
-                // Add regular chat to main chat pane
                 StyledDocument chatDoc = chatAreaPane.getStyledDocument();
                 chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatDefault);
                 chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
@@ -1350,6 +1437,7 @@ public class GameScreen extends JPanel {
         public int previewRotation = 0;
 
         private boolean isSelected = false;
+        private boolean isMemo = false;
 
         private static final int PREVIEW_PANEL_SIZE = 50;
         private final int PREVIEW_CELL_SIZE = 8;
@@ -1372,7 +1460,7 @@ public class GameScreen extends JPanel {
                     boardPanel.requestFocusInWindow();
 
                     if (e.getButton() == MouseEvent.BUTTON3) {
-                        deselectPiece();
+                        toggleMemo();
                         return;
                     }
 
@@ -1413,6 +1501,12 @@ public class GameScreen extends JPanel {
         public void setSelected(boolean selected) {
             this.isSelected = selected;
             setBorder(selected ? selectedBorder : defaultBorder);
+        }
+
+        public void toggleMemo() {
+            this.isMemo = !this.isMemo;
+            setBackground(isMemo ? Color.GRAY : Color.WHITE);
+            repaint();
         }
 
         @Override
@@ -1461,7 +1555,6 @@ public class GameScreen extends JPanel {
                 if (amISpectating && displayActive) {
                     // Spectator looking at their own inventory, don't dim
                 } else {
-                    // Dim if spectating (not own inventory) OR if piece is not active (resigned or not turn)
                     g.setColor(new Color(255, 255, 255, 180));
                     g.fillRect(0, 0, getWidth(), getHeight());
                 }

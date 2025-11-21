@@ -1,11 +1,13 @@
 package game;
 
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
@@ -26,7 +28,12 @@ public class BlokusServer {
     private static final String SCORES_FILE = "blokus_scores.properties";
 
     public static void main(String[] args) {
-        System.setProperty("file.encoding", "UTF-8");
+        try {
+            System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
+            System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, "UTF-8"));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         new BlokusServer().startServer();
     }
 

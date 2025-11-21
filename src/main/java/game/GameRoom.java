@@ -703,11 +703,9 @@ public class GameRoom implements Serializable {
         if (activeColors == 0) return true;
 
         if (gameMode == GameMode.CLASSIC) {
-            if (playerCountOnStart == 4) {
-                if (passCount >= activeColors) return true;
-            } else if (playerCountOnStart == 2) {
-                if (passCount >= 4) return true;
-            }
+            // 기존 로직: 인원 수에 따라 passCount 비교
+            // 수정된 로직: 실제 살아있는 색상 수(activeColors)와 연속 패스 횟수 비교
+            if (passCount >= activeColors) return true;
         }
 
         return false;
