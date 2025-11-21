@@ -122,17 +122,25 @@ public class GameRoom implements Serializable {
 
         initializePlayerHandsAndColors();
 
+        // 플레이어 이름 목록 생성 (순서대로)
+        StringBuilder allPlayerNames = new StringBuilder();
+        for (ClientHandler p : players) {
+            allPlayerNames.append(p.getUsername()).append(",");
+        }
+        if (allPlayerNames.length() > 0) {
+            allPlayerNames.deleteCharAt(allPlayerNames.length() - 1);
+        }
+
         for (ClientHandler p : players) {
             StringBuilder myColorsStr = new StringBuilder();
             int[] colors = playerColors.get(p);
             for (int c : colors) myColorsStr.append(c).append(",");
             if (myColorsStr.length() > 0) myColorsStr.deleteCharAt(myColorsStr.length() - 1);
 
-            if (gameMode == GameMode.CLASSIC) {
-                p.sendMessage(Protocol.S2C_GAME_START + ":" + playerCountOnStart + ":" + myColorsStr);
-            } else {
-                p.sendMessage(Protocol.S2C_GAME_START_PEERLESS + ":" + playerCountOnStart + ":" + myColorsStr);
-            }
+            // 프로토콜 확장: S2C_GAME_START:playerCount:myColors:allPlayerNames
+            String msgBase = (gameMode == GameMode.CLASSIC) ? Protocol.S2C_GAME_START : Protocol.S2C_GAME_START_PEERLESS;
+            p.sendMessage(msgBase + ":" + playerCountOnStart + ":" + myColorsStr + ":" + allPlayerNames.toString());
+
             sendHandUpdate(p);
         }
 
