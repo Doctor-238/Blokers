@@ -16,8 +16,6 @@ public class Protocol {
     public static final String C2S_RESIGN_COLOR = "RESIGN_COLOR";
     public static final String C2S_WHISPER = "WHISPER";
 
-    public static final String C2S_RESIGN_PEERLESS = "RESIGN_PEERLESS";
-
     public static final String S2C_LOGIN_SUCCESS = "LOGIN_SUCCESS";
     public static final String S2C_LOGIN_FAIL = "LOGIN_FAIL";
     public static final String S2C_ROOM_LIST = "ROOM_LIST";
@@ -25,7 +23,6 @@ public class Protocol {
     public static final String S2C_JOIN_FAIL = "JOIN_FAIL";
     public static final String S2C_ROOM_UPDATE = "ROOM_UPDATE";
     public static final String S2C_KICKED = "KICKED";
-
     public static final String S2C_GAME_START = "GAME_START";
     public static final String S2C_GAME_STATE = "GAME_STATE";
     public static final String S2C_HAND_UPDATE = "HAND_UPDATE";
@@ -36,15 +33,8 @@ public class Protocol {
     public static final String S2C_SYSTEM_MSG = "SYSTEM_MSG";
     public static final String S2C_LEADERBOARD_DATA = "LEADERBOARD_DATA";
     public static final String S2C_WHISPER = "WHISPER";
-    public static final String S2C_TIME_UPDATE = "TIME_UPDATE";
 
-    public static final String S2C_GAME_START_PEERLESS = "GAME_START_PEERLESS";
-    public static final String S2C_PEERLESS_PREP_START = "PEERLESS_PREP_START";
-    public static final String S2C_PEERLESS_MAIN_START = "PEERLESS_MAIN_START";
-    public static final String S2C_PEERLESS_TIMER_UPDATE = "PEERLESS_TIMER_UPDATE";
-    public static final String S2C_PEERLESS_PREP_TIMER_UPDATE = "PEERLESS_PREP_TIMER_UPDATE";
-    public static final String S2C_PEERLESS_PLACE_SUCCESS = "PEERLESS_PLACE_SUCCESS";
-    public static final String S2C_PEERLESS_PLACE_FAIL = "PEERLESS_PLACE_FAIL";
-    public static final String S2C_PEERLESS_BOARD_UPDATE = "PEERLESS_BOARD_UPDATE";
+
+    public static final String S2C_TIME_UPDATE = "TIME_UPDATE";
 
 }

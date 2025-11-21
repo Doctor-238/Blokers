@@ -52,7 +52,7 @@ public class ClientHandler extends Thread {
     }
 
     private void handleMessage(String message) {
-        String[] parts = message.split(":", 3);
+        String[] parts = message.split(":", 2);
         String command = parts[0];
         String data = (parts.length > 1) ? parts[1] : "";
 
@@ -75,11 +75,7 @@ public class ClientHandler extends Thread {
                     server.sendRoomList(this);
                     break;
                 case Protocol.C2S_CREATE_ROOM:
-                    if (parts.length == 3) {
-                        handleCreateRoom(parts[1], parts[2]);
-                    } else {
-                        handleCreateRoom(data, "CLASSIC");
-                    }
+                    handleCreateRoom(data);
                     break;
                 case Protocol.C2S_JOIN_ROOM:
                     handleJoinRoom(data);
@@ -94,7 +90,7 @@ public class ClientHandler extends Thread {
                     handleKickPlayer(data);
                     break;
                 case Protocol.C2S_PLACE_BLOCK:
-                    handlePlaceBlock(message.substring(Protocol.C2S_PLACE_BLOCK.length() + 1));
+                    handlePlaceBlock(data);
                     break;
                 case Protocol.C2S_PASS_TURN:
                     handlePassTurn();
@@ -105,19 +101,12 @@ public class ClientHandler extends Thread {
                         currentRoom.handleResignColor(this, data);
                     }
                     break;
-
-                case Protocol.C2S_RESIGN_PEERLESS:
-                    if (currentRoom != null) {
-                        currentRoom.handlePeerlessResign(this);
-                    }
-                    break;
-
                 case Protocol.C2S_CHAT:
                     handleChat(data);
                     break;
 
                 case Protocol.C2S_WHISPER:
-                    String[] whisperParts = message.substring(Protocol.C2S_WHISPER.length() + 1).split(":", 2);
+                    String[] whisperParts = data.split(":", 2);
                     if (whisperParts.length == 2) {
                         server.sendWhisper(this, whisperParts[0], whisperParts[1]);
                     }
@@ -150,7 +139,7 @@ public class ClientHandler extends Thread {
         server.addClientToLobby(this);
     }
 
-    private void handleCreateRoom(String roomName, String modeStr) {
+    private void handleCreateRoom(String roomName) {
         if (currentRoom != null) {
             sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 방에 입장해 있습니다.");
             return;
@@ -159,15 +148,7 @@ public class ClientHandler extends Thread {
             sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 존재하는 방 이름입니다.");
             return;
         }
-
-        GameRoom.GameMode gameMode;
-        try {
-            gameMode = GameRoom.GameMode.valueOf(modeStr.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            gameMode = GameRoom.GameMode.CLASSIC;
-        }
-
-        GameRoom newRoom = server.createRoom(roomName, this, gameMode);
+        GameRoom newRoom = server.createRoom(roomName, this);
         this.currentRoom = newRoom;
         sendMessage(Protocol.S2C_JOIN_SUCCESS + ":" + newRoom.getRoomId() + ":" + newRoom.getRoomName());
     }
