@@ -3,25 +3,27 @@ package game;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.HashMap;
+import java.util.Map;
 
-/**
- * 블로커스 게임 서버 메인 클래스.
- */
 public class BlokusServer {
     private static final int PORT = 12345;
 
-    private ConcurrentHashMap<Integer, GameRoom> gameRooms = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, ClientHandler> lobbyClients = new ConcurrentHashMap<>();
-    private AtomicInteger roomIdCounter = new AtomicInteger(0);
+    //Map + HashMap
+    private final Map<Integer, GameRoom> gameRooms = new HashMap<>();
+    private final Map<String, ClientHandler> lobbyClients = new HashMap<>();
+
+    //일반 int
+    private int roomIdCounter = 0;
 
     public static void main(String[] args) {
         new BlokusServer().startServer();
     }
 
     public void startServer() {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+        ServerSocket serverSocket = null;
+        try {
+            serverSocket = new ServerSocket(PORT);
             System.out.println("블로커스 서버 시작. 포트: " + PORT);
 
             while (true) {
@@ -32,10 +34,18 @@ public class BlokusServer {
             }
         } catch (IOException e) {
             System.err.println("서버 소켓 오류: " + e.getMessage());
+        } finally {
+            if (serverSocket != null) {
+                try {
+                    serverSocket.close();
+                } catch (IOException e) {
+                    System.err.println("서버 소켓 종료 중 오류: " + e.getMessage());
+                }
+            }
         }
     }
 
-    // [신규] 이름 중복 체크
+    // 이름 중복 체크
     public synchronized boolean isUsernameTaken(String username) {
         // 로비 체크
         if (lobbyClients.containsKey(username)) {
@@ -50,7 +60,7 @@ public class BlokusServer {
         return false;
     }
 
-    // [신규] 방 이름 중복 체크
+    // 방 이름 중복 체크
     public synchronized boolean isRoomNameTaken(String roomName) {
         for (GameRoom room : gameRooms.values()) {
             if (room.getRoomName().equalsIgnoreCase(roomName)) {
@@ -60,19 +70,23 @@ public class BlokusServer {
         return false;
     }
 
-    public void addClientToLobby(ClientHandler client) {
+    // [변경] 맵 접근 메서드에 synchronized 추가
+    public synchronized void addClientToLobby(ClientHandler client) {
         lobbyClients.put(client.getUsername(), client);
         broadcastRoomListToLobby();
     }
 
-    public void removeClientFromLobby(ClientHandler client) {
+    public synchronized void removeClientFromLobby(ClientHandler client) {
         if (client.getUsername() != null) {
             lobbyClients.remove(client.getUsername());
         }
     }
 
-    public GameRoom createRoom(String roomName, ClientHandler host) {
-        int roomId = roomIdCounter.incrementAndGet();
+    public synchronized GameRoom createRoom(String roomName, ClientHandler host) {
+        // [변경] AtomicInteger 대신 int 증가
+        roomIdCounter++;
+        int roomId = roomIdCounter;
+
         GameRoom newRoom = new GameRoom(roomId, roomName, host, this);
         gameRooms.put(roomId, newRoom);
 
@@ -84,7 +98,7 @@ public class BlokusServer {
         return newRoom;
     }
 
-    public GameRoom joinRoom(int roomId, ClientHandler player) {
+    public synchronized GameRoom joinRoom(int roomId, ClientHandler player) {
         GameRoom room = gameRooms.get(roomId);
         if (room != null && !room.isGameStarted() && room.getPlayerCount() < 4) {
             removeClientFromLobby(player);
@@ -96,8 +110,8 @@ public class BlokusServer {
         return null; // 참여 실패
     }
 
-    public void leaveRoom(GameRoom room, ClientHandler player) {
-        // [수정됨] 0명일 때 방 제거 로직 (GameRoom.removePlayer에서 true 반환)
+    public synchronized void leaveRoom(GameRoom room, ClientHandler player) {
+        // 0명일 때 방 제거 로직 (GameRoom.removePlayer에서 true 반환)
         boolean roomShouldBeRemoved = room.removePlayer(player);
 
         if (roomShouldBeRemoved) {
@@ -111,7 +125,7 @@ public class BlokusServer {
         broadcastRoomListToLobby();
     }
 
-    public void removeRoom(int roomId) {
+    public synchronized void removeRoom(int roomId) {
         GameRoom room = gameRooms.remove(roomId);
         if (room != null) {
             System.out.println("게임 종료. 방 " + roomId + " 제거됨.");
@@ -124,8 +138,8 @@ public class BlokusServer {
         broadcastRoomListToLobby();
     }
 
-    public void broadcastRoomListToLobby() {
-        StringBuilder roomListStr = new StringBuilder(Protocol.S2C_ROOM_LIST);
+    public synchronized void broadcastRoomListToLobby() {
+        StringBuilder roomListStr = new StringBuilder("ROOM_LIST");
 
         boolean hasData = false;
         for (GameRoom room : gameRooms.values()) {
@@ -149,13 +163,13 @@ public class BlokusServer {
         }
     }
 
-    public GameRoom getRoom(int roomId) {
+    public synchronized GameRoom getRoom(int roomId) {
         return gameRooms.get(roomId);
     }
 
-    public void onClientDisconnect(ClientHandler client) {
-        if(client.getCurrentRoom() != null) {
-            // [수정됨] 0명 방 자동 제거 로직 호출
+    public synchronized void onClientDisconnect(ClientHandler client) {
+        if (client.getCurrentRoom() != null) {
+            // 0명 방 자동 제거 로직 호출
             leaveRoom(client.getCurrentRoom(), client);
         }
         removeClientFromLobby(client);

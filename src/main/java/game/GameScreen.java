@@ -4,6 +4,7 @@ import javax.swing.*;
 import javax.swing.border.Border;
 import java.awt.*;
 import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
@@ -13,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * [수정됨] 실제 블로커스 게임이 이루어지는 JPanel.
+ * 실제 블로커스 게임이 이루어지는 JPanel.
  * 채팅(좌), 보드(중), 인벤토리(하), 정보/조작(상)
  */
 public class GameScreen extends JPanel {
@@ -93,11 +94,21 @@ public class GameScreen extends JPanel {
         // 1-2. 조작 버튼 (회전, 턴 넘기기)
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         JButton rotateButton = new JButton("회전");
-        rotateButton.addActionListener(e -> rotateSelectedPiece());
+        rotateButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                rotateSelectedPiece();
+            }
+        });
+
         JButton passButton = new JButton("턴 넘기기");
-        passButton.addActionListener(e -> {
-            client.sendMessage(Protocol.C2S_PASS_TURN);
-            deselectPiece();
+        passButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // Protocol.C2S_PASS_TURN -> "PASS_TURN"
+                client.sendMessage("PASS_TURN");
+                deselectPiece();
+            }
         });
 
         controlPanel.add(rotateButton);
@@ -126,10 +137,14 @@ public class GameScreen extends JPanel {
 
         toggleColorButton = new JButton("내 블록 색상 전환");
         toggleColorButton.setVisible(false);
-        toggleColorButton.addActionListener(e -> toggleInventoryColor());
+        toggleColorButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                toggleInventoryColor();
+            }
+        });
         southPanel.add(toggleColorButton, BorderLayout.NORTH);
 
-        // [수정됨] WrapLayout 사용
         handPanel = new JPanel(new WrapLayout(WrapLayout.LEFT, 5, 5));
         handPanel.setBackground(Color.WHITE);
         handScrollPane = new JScrollPane(handPanel);
@@ -147,9 +162,19 @@ public class GameScreen extends JPanel {
 
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
-        chatField.addActionListener(e -> sendChat());
+        chatField.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sendChat();
+            }
+        });
         JButton sendButton = new JButton("전송");
-        sendButton.addActionListener(e -> sendChat());
+        sendButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sendChat();
+            }
+        });
         chatInputPanel.add(chatField, BorderLayout.CENTER);
         chatInputPanel.add(sendButton, BorderLayout.EAST);
         chatPanel.add(chatInputPanel, BorderLayout.SOUTH);
@@ -157,27 +182,7 @@ public class GameScreen extends JPanel {
         chatPanel.setPreferredSize(new Dimension(250, 0));
         add(chatPanel, BorderLayout.WEST);
 
-        // 'R' 키보드 바인딩 설정
-        setupKeyBindings();
-    }
-
-    // 'R' 키 바인딩
-    private void setupKeyBindings() {
-        InputMap im = this.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-        ActionMap am = this.getActionMap();
-
-        im.put(KeyStroke.getKeyStroke('r'), "rotateAction");
-        im.put(KeyStroke.getKeyStroke('R'), "rotateAction");
-
-        am.put("rotateAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                // 채팅창에 포커스가 없을 때만 회전
-                if (!chatField.isFocusOwner()) {
-                    rotateSelectedPiece();
-                }
-            }
-        });
+        // KeyBinding은 사용 안 함 (setupKeyBindings 삭제)
     }
 
     // S2C_GAME_START:<playerCount>:<yourColor(s)>
@@ -287,7 +292,7 @@ public class GameScreen extends JPanel {
         return String.format("%d:%02d", seconds / 60, seconds % 60);
     }
 
-    // 하단 인벤토리가 inventoryDisplayColor만 표시하도록 수정
+    // 하단 인벤토리가 inventoryDisplayColor만 표시하도록
     private void updateHandPanelUI() {
         handPanel.removeAll();
         handPanelCache.clear();
@@ -327,7 +332,7 @@ public class GameScreen extends JPanel {
         }
 
         // 시작 코너 표시
-        drawCornerMarker(g2d, 0, 0, getColorForPlayer(1)); // Red
+        drawCornerMarker(g2d, 0, 0, getColorForPlayer(1));  // Red
         drawCornerMarker(g2d, 19, 0, getColorForPlayer(2)); // Blue
         drawCornerMarker(g2d, 19, 19, getColorForPlayer(3)); // Yellow
         drawCornerMarker(g2d, 0, 19, getColorForPlayer(4)); // Green
@@ -401,7 +406,6 @@ public class GameScreen extends JPanel {
         boardPanel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                // 보드 클릭 시 채팅창 포커스 해제
                 boardPanel.requestFocusInWindow();
 
                 if (e.getButton() == MouseEvent.BUTTON3) { // 우클릭
@@ -409,11 +413,9 @@ public class GameScreen extends JPanel {
                     return;
                 }
 
-                // [수정됨] isMyTurn() 체크 추가
                 if (selectedPiece != null && isGhostValid && isMyTurn()) {
-                    // C2S_PLACE_BLOCK: <pieceId>:<x>:<y>:<rotation>
-                    String message = String.format("%s:%s:%d:%d:%d",
-                            Protocol.C2S_PLACE_BLOCK,
+                    // Protocol.C2S_PLACE_BLOCK -> "PLACE"
+                    String message = String.format("PLACE:%s:%d:%d:%d",
                             selectedPiece.getId(),
                             mouseGridPos.x,
                             mouseGridPos.y,
@@ -437,7 +439,7 @@ public class GameScreen extends JPanel {
         });
     }
 
-    // [수정됨] 인벤토리 패널도 같이 회전
+    // 인벤토리/고스트 회전
     private void rotateSelectedPiece() {
         if (selectedPiece != null) {
             selectedPiece.rotate(); // 고스트 회전
@@ -451,7 +453,6 @@ public class GameScreen extends JPanel {
     private void deselectPiece() {
         if (selectedPanel != null) {
             selectedPanel.setSelected(false);
-            // [신규] 회전한 인벤토리 조각 원복
             selectedPanel.resetRotation(selectedPiece.getId());
         }
         selectedPiece = null;
@@ -487,7 +488,8 @@ public class GameScreen extends JPanel {
     private void sendChat() {
         String message = chatField.getText();
         if (!message.trim().isEmpty()) {
-            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
+            // Protocol.C2S_CHAT -> "CHAT"
+            client.sendMessage("CHAT:" + message);
             chatField.setText("");
         }
     }
@@ -512,7 +514,6 @@ public class GameScreen extends JPanel {
         }
         return false;
     }
-
 
     /**
      * 턴/색상 표시용 사각형 패널
@@ -540,19 +541,17 @@ public class GameScreen extends JPanel {
         }
     }
 
-
     /**
      * 인벤토리용 블록 조각 시각화 패널
      */
     private class PiecePreviewPanel extends JPanel {
-        private BlokusPiece piece; // [수정됨] 회전/선택 상태를 가지는 인스턴스
+        private BlokusPiece piece;
         private boolean isSelected = false;
         private final int PREVIEW_CELL_SIZE = 8;
         private final Border selectedBorder = BorderFactory.createLineBorder(Color.CYAN, 3);
         private final Border defaultBorder = BorderFactory.createLineBorder(Color.LIGHT_GRAY, 1);
 
         public PiecePreviewPanel(BlokusPiece piece) {
-            // [수정됨] 원본을 복사해서 사용
             this.piece = new BlokusPiece(piece);
 
             int w = piece.getWidth() * PREVIEW_CELL_SIZE + 6;
@@ -566,11 +565,6 @@ public class GameScreen extends JPanel {
                 public void mouseClicked(MouseEvent e) {
                     boardPanel.requestFocusInWindow();
 
-                    // [수정됨] 턴 제한 제거 (Req 4)
-                    // if (!isMyTurn() || piece.getColor() != currentTurnColor) {
-                    //     return;
-                    // }
-
                     if (e.getButton() == MouseEvent.BUTTON3) {
                         deselectPiece();
                         return;
@@ -581,23 +575,20 @@ public class GameScreen extends JPanel {
                     } else {
                         if (selectedPanel != null) {
                             selectedPanel.setSelected(false);
-                            // [신규] 이전 선택 패널 회전 리셋
                             selectedPanel.resetRotation(selectedPiece.getId());
                         }
 
                         setSelected(true);
                         selectedPanel = PiecePreviewPanel.this;
-                        // [수정됨] 인벤토리 패널의 현재 상태를 복사
                         selectedPiece = new BlokusPiece(PiecePreviewPanel.this.piece);
-                        currentRotation = 0; // 고스트는 항상 0에서 시작
+                        currentRotation = 0;
                     }
                 }
             });
         }
 
-        // [신규] 인벤토리 패널 자체를 회전
         public void rotatePreview() {
-            this.piece.rotate(); // 인벤토리 조각 회전
+            this.piece.rotate();
 
             int w = piece.getWidth() * PREVIEW_CELL_SIZE + 6;
             int h = piece.getHeight() * PREVIEW_CELL_SIZE + 6;
@@ -607,9 +598,7 @@ public class GameScreen extends JPanel {
             repaint();
         }
 
-        // [신규] 선택 해제 시 회전 초기화
         public void resetRotation(String originalId) {
-            // ID와 색상으로 새 조각을 만들어 원본 모양으로 복구
             this.piece = new BlokusPiece(originalId, this.piece.getColor());
 
             int w = piece.getWidth() * PREVIEW_CELL_SIZE + 6;
@@ -638,10 +627,9 @@ public class GameScreen extends JPanel {
                         PREVIEW_CELL_SIZE);
             }
 
-            // [수정됨] 비활성화 로직 (현재 턴의 색상인가?)
             boolean isActive = (piece.getColor() == currentTurnColor);
             if (!isActive) {
-                g.setColor(new Color(255, 255, 255, 180)); // 70%
+                g.setColor(new Color(255, 255, 255, 180));
                 g.fillRect(0, 0, getWidth(), getHeight());
             }
         }

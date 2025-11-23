@@ -48,40 +48,42 @@ public class ClientHandler extends Thread {
         String data = (parts.length > 1) ? parts[1] : "";
 
         try {
-            if (username == null && !command.equals(Protocol.C2S_LOGIN)) {
-                sendMessage(Protocol.S2C_LOGIN_FAIL + ":로그인이 필요합니다.");
+            // Protocol.C2S_LOGIN -> "LOGIN"
+            if (username == null && !command.equals("LOGIN")) {
+                // Protocol.S2C_LOGIN_FAIL -> "LOGIN_FAIL"
+                sendMessage("LOGIN_FAIL:로그인이 필요합니다.");
                 return;
             }
 
             switch (command) {
-                case Protocol.C2S_LOGIN:
+                case "LOGIN": // Protocol.C2S_LOGIN
                     handleLogin(data);
                     break;
-                case Protocol.C2S_GET_ROOM_LIST:
+                case "GET_ROOM_LIST": // Protocol.C2S_GET_ROOM_LIST
                     server.broadcastRoomListToLobby();
                     break;
-                case Protocol.C2S_CREATE_ROOM:
+                case "CREATE_ROOM": // Protocol.C2S_CREATE_ROOM
                     handleCreateRoom(data);
                     break;
-                case Protocol.C2S_JOIN_ROOM:
+                case "JOIN_ROOM": // Protocol.C2S_JOIN_ROOM
                     handleJoinRoom(data);
                     break;
-                case Protocol.C2S_LEAVE_ROOM:
+                case "LEAVE_ROOM": // Protocol.C2S_LEAVE_ROOM
                     handleLeaveRoom();
                     break;
-                case Protocol.C2S_START_GAME:
+                case "START_GAME": // Protocol.C2S_START_GAME
                     handleStartGame();
                     break;
-                case Protocol.C2S_KICK_PLAYER:
+                case "KICK": // Protocol.C2S_KICK_PLAYER
                     handleKickPlayer(data);
                     break;
-                case Protocol.C2S_PLACE_BLOCK:
+                case "PLACE": // Protocol.C2S_PLACE_BLOCK
                     handlePlaceBlock(data);
                     break;
-                case Protocol.C2S_PASS_TURN:
+                case "PASS_TURN": // Protocol.C2S_PASS_TURN
                     handlePassTurn();
                     break;
-                case Protocol.C2S_CHAT:
+                case "CHAT": // Protocol.C2S_CHAT
                     handleChat(data);
                     break;
                 default:
@@ -96,39 +98,43 @@ public class ClientHandler extends Thread {
     // C2S_LOGIN: <username>
     private void handleLogin(String username) {
         if (username == null || username.trim().isEmpty()) {
-            sendMessage(Protocol.S2C_LOGIN_FAIL + ":유효하지 않은 이름입니다.");
+            // Protocol.S2C_LOGIN_FAIL -> "LOGIN_FAIL"
+            sendMessage("LOGIN_FAIL:유효하지 않은 이름입니다.");
             return;
         }
         if (server.isUsernameTaken(username)) {
-            sendMessage(Protocol.S2C_LOGIN_FAIL + ":이미 사용중인 이름입니다.");
+            sendMessage("LOGIN_FAIL:이미 사용중인 이름입니다.");
             return;
         }
 
         this.username = username;
-        sendMessage(Protocol.S2C_LOGIN_SUCCESS);
+        // Protocol.S2C_LOGIN_SUCCESS -> "LOGIN_SUCCESS"
+        sendMessage("LOGIN_SUCCESS");
         server.addClientToLobby(this);
     }
 
     // C2S_CREATE_ROOM: <roomName>
     private void handleCreateRoom(String roomName) {
         if (currentRoom != null) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 방에 입장해 있습니다.");
+            // Protocol.S2C_SYSTEM_MSG -> "SYSTEM_MSG"
+            sendMessage("SYSTEM_MSG:이미 방에 입장해 있습니다.");
             return;
         }
         if (server.isRoomNameTaken(roomName)) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 존재하는 방 이름입니다.");
+            sendMessage("SYSTEM_MSG:이미 존재하는 방 이름입니다.");
             return;
         }
 
         GameRoom newRoom = server.createRoom(roomName, this);
         this.currentRoom = newRoom;
-        sendMessage(Protocol.S2C_JOIN_SUCCESS + ":" + newRoom.getRoomId() + ":" + newRoom.getRoomName());
+        // Protocol.S2C_JOIN_SUCCESS -> "JOIN_SUCCESS"
+        sendMessage("JOIN_SUCCESS:" + newRoom.getRoomId() + ":" + newRoom.getRoomName());
     }
 
     // C2S_JOIN_ROOM: <roomId>
     private void handleJoinRoom(String roomIdStr) {
         if (currentRoom != null) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 방에 입장해 있습니다.");
+            sendMessage("SYSTEM_MSG:이미 방에 입장해 있습니다.");
             return;
         }
         try {
@@ -136,27 +142,28 @@ public class ClientHandler extends Thread {
             GameRoom room = server.joinRoom(roomId, this);
             if (room != null) {
                 this.currentRoom = room;
-                sendMessage(Protocol.S2C_JOIN_SUCCESS + ":" + room.getRoomId() + ":" + room.getRoomName());
+                sendMessage("JOIN_SUCCESS:" + room.getRoomId() + ":" + room.getRoomName());
             } else {
-                sendMessage(Protocol.S2C_JOIN_FAIL + ":방이 꽉 찼거나 게임 중입니다.");
+                // Protocol.S2C_JOIN_FAIL -> "JOIN_FAIL"
+                sendMessage("JOIN_FAIL:방이 꽉 찼거나 게임 중입니다.");
             }
         } catch (NumberFormatException e) {
-            sendMessage(Protocol.S2C_JOIN_FAIL + ":잘못된 방 ID입니다.");
+            sendMessage("JOIN_FAIL:잘못된 방 ID입니다.");
         }
     }
 
     // C2S_LEAVE_ROOM
     private void handleLeaveRoom() {
         if (currentRoom == null) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":입장한 방이 없습니다.");
+            sendMessage("SYSTEM_MSG:입장한 방이 없습니다.");
             return;
         }
         if (!currentRoom.isGameStarted()) {
             server.leaveRoom(currentRoom, this);
             this.currentRoom = null;
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":방에서 나왔습니다. 로비로 이동합니다.");
+            sendMessage("SYSTEM_MSG:방에서 나왔습니다. 로비로 이동합니다.");
         } else {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":게임이 시작된 후에는 나갈 수 없습니다.");
+            sendMessage("SYSTEM_MSG:게임이 시작된 후에는 나갈 수 없습니다.");
         }
     }
 
@@ -173,7 +180,8 @@ public class ClientHandler extends Thread {
     // C2S_PLACE_BLOCK: <pieceId>:<x>:<y>:<rotation>
     private void handlePlaceBlock(String data) {
         if (currentRoom == null || !currentRoom.isGameStarted()) {
-            sendMessage(Protocol.S2C_INVALID_MOVE + ":게임 중이 아닙니다.");
+            // Protocol.S2C_INVALID_MOVE -> "INVALID_MOVE"
+            sendMessage("INVALID_MOVE:게임 중이 아닙니다.");
             return;
         }
         currentRoom.handlePlaceBlock(this, data);
@@ -181,7 +189,7 @@ public class ClientHandler extends Thread {
 
     private void handlePassTurn() {
         if (currentRoom == null || !currentRoom.isGameStarted()) {
-            sendMessage(Protocol.S2C_INVALID_MOVE + ":게임 중이 아닙니다.");
+            sendMessage("INVALID_MOVE:게임 중이 아닙니다.");
             return;
         }
         currentRoom.handlePassTurn(this);
@@ -189,9 +197,10 @@ public class ClientHandler extends Thread {
 
     private void handleChat(String message) {
         if (currentRoom != null) {
-            currentRoom.broadcastMessage(Protocol.S2C_CHAT + ":" + this.username + ":" + message);
+            // Protocol.S2C_CHAT -> "CHAT"
+            currentRoom.broadcastMessage("CHAT:" + this.username + ":" + message);
         } else {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":방에 입장해야 채팅할 수 있습니다.");
+            sendMessage("SYSTEM_MSG:방에 입장해야 채팅할 수 있습니다.");
         }
     }
 

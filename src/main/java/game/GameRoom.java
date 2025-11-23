@@ -13,14 +13,17 @@ public class GameRoom {
     private ClientHandler host;
     private BlokusServer server;
 
-    private List<ClientHandler> players = Collections.synchronizedList(new ArrayList<>());
+    // [변경] Collections.synchronizedList -> 단순 ArrayList
+    // 동기화는 아래 synchronized 메서드/블록에서 처리
+    private List<ClientHandler> players = new ArrayList<>();
 
     private boolean gameStarted = false;
     private int[][] board = new int[20][20];
 
-    private Map<ClientHandler, List<BlokusPiece>> playerHands = Collections.synchronizedMap(new HashMap<>());
-    private Map<ClientHandler, int[]> playerColors = Collections.synchronizedMap(new HashMap<>());
-    private Map<Integer, Boolean> isFirstMoveForColor = Collections.synchronizedMap(new HashMap<>());
+    // [변경] Collections.synchronizedMap -> 단순 HashMap
+    private Map<ClientHandler, List<BlokusPiece>> playerHands = new HashMap<>();
+    private Map<ClientHandler, int[]> playerColors = new HashMap<>();
+    private Map<Integer, Boolean> isFirstMoveForColor = new HashMap<>();
 
     private int playerCountOnStart = 0;
     private int currentPlayerTurnIndex = 0;
@@ -32,8 +35,10 @@ public class GameRoom {
     private static final int TIME_BONUS_SECONDS = 10; // 턴 시작 시 10초 추가
     private Timer gameTimer;
     private TimerTask currentTimerTask;
-    private Map<Integer, Integer> remainingTime = Collections.synchronizedMap(new HashMap<>());
-    private Map<Integer, Boolean> isTimedOut = Collections.synchronizedMap(new HashMap<>());
+
+    // [변경] 여기서도 synchronizedMap 제거
+    private Map<Integer, Integer> remainingTime = new HashMap<>();
+    private Map<Integer, Boolean> isTimedOut = new HashMap<>();
 
     public GameRoom(int roomId, String roomName, ClientHandler host, BlokusServer server) {
         this.roomId = roomId;
@@ -65,7 +70,8 @@ public class GameRoom {
         player.setCurrentRoom(null);
 
         if (gameStarted) {
-            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 게임 중 나갔습니다. (패배 처리)");
+            // Protocol.S2C_SYSTEM_MSG -> "SYSTEM_MSG"
+            broadcastMessage("SYSTEM_MSG" + ":" + player.getUsername() + "님이 게임 중 나갔습니다. (패배 처리)");
             if (players.size() < 2) {
                 handleGameOver(true); // 강제 종료
             }
@@ -77,7 +83,7 @@ public class GameRoom {
 
         if (wasHost && !players.isEmpty()) {
             host = players.get(0);
-            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + host.getUsername() + "님이 새 방장이 되었습니다.");
+            broadcastMessage("SYSTEM_MSG" + ":" + host.getUsername() + "님이 새 방장이 되었습니다.");
         }
 
         if (!gameStarted) {
@@ -88,15 +94,15 @@ public class GameRoom {
 
     public synchronized void startGame(ClientHandler starter) {
         if (!starter.equals(host)) {
-            starter.sendMessage(Protocol.S2C_SYSTEM_MSG + ":방장만 게임을 시작할 수 있습니다.");
+            starter.sendMessage("SYSTEM_MSG" + ":방장만 게임을 시작할 수 있습니다.");
             return;
         }
         if (gameStarted) {
-            starter.sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 게임이 시작되었습니다.");
+            starter.sendMessage("SYSTEM_MSG" + ":이미 게임이 시작되었습니다.");
             return;
         }
         if (players.size() != 2 && players.size() != 4) {
-            starter.sendMessage(Protocol.S2C_SYSTEM_MSG + ":2명 또는 4명일 때만 시작할 수 있습니다.");
+            starter.sendMessage("SYSTEM_MSG" + ":2명 또는 4명일 때만 시작할 수 있습니다.");
             return;
         }
 
@@ -105,7 +111,7 @@ public class GameRoom {
         this.board = new int[20][20];
         this.passCount = 0;
 
-        for (int i=1; i<=4; i++) {
+        for (int i = 1; i <= 4; i++) {
             remainingTime.put(i, INITIAL_TIME_SECONDS);
             isTimedOut.put(i, false);
         }
@@ -118,10 +124,13 @@ public class GameRoom {
 
             String myColorsStr = "";
             int[] colors = playerColors.get(player);
-            for(int c : colors) { myColorsStr += c + ","; }
+            for (int c : colors) {
+                myColorsStr += c + ",";
+            }
             myColorsStr = myColorsStr.substring(0, myColorsStr.length() - 1);
 
-            player.sendMessage(Protocol.S2C_GAME_START + ":" + playerCountOnStart + ":" + myColorsStr);
+            // Protocol.S2C_GAME_START -> "GAME_START"
+            player.sendMessage("GAME_START" + ":" + playerCountOnStart + ":" + myColorsStr);
             sendHandUpdate(player);
         }
 
@@ -131,15 +140,15 @@ public class GameRoom {
 
     public synchronized void kickPlayer(ClientHandler kicker, String targetUsername) {
         if (!kicker.equals(host)) {
-            kicker.sendMessage(Protocol.S2C_SYSTEM_MSG + ":방장만 강퇴할 수 있습니다.");
+            kicker.sendMessage("SYSTEM_MSG" + ":방장만 강퇴할 수 있습니다.");
             return;
         }
         if (kicker.getUsername().equals(targetUsername)) {
-            kicker.sendMessage(Protocol.S2C_SYSTEM_MSG + ":자기 자신을 강퇴할 수 없습니다.");
+            kicker.sendMessage("SYSTEM_MSG" + ":자기 자신을 강퇴할 수 없습니다.");
             return;
         }
         if (gameStarted) {
-            kicker.sendMessage(Protocol.S2C_SYSTEM_MSG + ":게임 시작 후에는 강퇴할 수 없습니다.");
+            kicker.sendMessage("SYSTEM_MSG" + ":게임 시작 후에는 강퇴할 수 없습니다.");
             return;
         }
 
@@ -152,36 +161,37 @@ public class GameRoom {
         }
 
         if (target != null) {
-            target.sendMessage(Protocol.S2C_KICKED);
+            // Protocol.S2C_KICKED -> "KICKED"
+            target.sendMessage("KICKED");
             removePlayer(target);
             server.addClientToLobby(target);
-            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + targetUsername + "님이 강퇴당했습니다.");
+            broadcastMessage("SYSTEM_MSG" + ":" + targetUsername + "님이 강퇴당했습니다.");
         } else {
-            kicker.sendMessage(Protocol.S2C_SYSTEM_MSG + ":해당 유저를 찾을 수 없습니다.");
+            kicker.sendMessage("SYSTEM_MSG" + ":해당 유저를 찾을 수 없습니다.");
         }
     }
 
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
         if (isTimedOut.get(currentTurnColor)) {
-            player.sendMessage(Protocol.S2C_INVALID_MOVE + ":시간이 초과되어 이 색상으로는 놓을 수 없습니다.");
+            player.sendMessage("INVALID_MOVE" + ":시간이 초과되어 이 색상으로는 놓을 수 없습니다.");
             return;
         }
 
         if (playerCountOnStart == 4) {
             if (!players.get(currentPlayerTurnIndex).equals(player)) {
-                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
+                player.sendMessage("INVALID_MOVE" + ":당신의 턴이 아닙니다.");
                 return;
             }
         } else {
             if (!players.get(currentPlayerTurnIndex % 2).equals(player)) {
-                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
+                player.sendMessage("INVALID_MOVE" + ":당신의 턴이 아닙니다.");
                 return;
             }
         }
 
         String[] parts = data.split(":");
         if (parts.length < 4) {
-            player.sendMessage(Protocol.S2C_INVALID_MOVE + ":잘못된 요청입니다.");
+            player.sendMessage("INVALID_MOVE" + ":잘못된 요청입니다.");
             return;
         }
 
@@ -199,14 +209,14 @@ public class GameRoom {
             }
         }
         if (pieceToPlace == null) {
-            player.sendMessage(Protocol.S2C_INVALID_MOVE + ":해당 조각을(ID:" + pieceId + ", Color:" + currentTurnColor + ") 가지고 있지 않거나 이미 사용했습니다.");
+            player.sendMessage("INVALID_MOVE" + ":해당 조각을(ID:" + pieceId + ", Color:" + currentTurnColor + ") 가지고 있지 않거나 이미 사용했습니다.");
             return;
         }
 
         for (int i = 0; i < rotation; i++) pieceToPlace.rotate();
 
         if (!isValidMove(pieceToPlace, x, y, this.currentTurnColor)) {
-            player.sendMessage(Protocol.S2C_INVALID_MOVE + ":놓을 수 없는 위치입니다. (규칙 위반)");
+            player.sendMessage("INVALID_MOVE" + ":놓을 수 없는 위치입니다. (규칙 위반)");
             return;
         }
 
@@ -231,17 +241,15 @@ public class GameRoom {
         if (player != null) {
             if (playerCountOnStart == 4) {
                 if (!players.get(currentPlayerTurnIndex).equals(player)) {
-                    player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
+                    player.sendMessage("INVALID_MOVE" + ":당신의 턴이 아닙니다.");
                     return;
                 }
             } else {
                 if (!players.get(currentPlayerTurnIndex % 2).equals(player)) {
-                    player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
+                    player.sendMessage("INVALID_MOVE" + ":당신의 턴이 아닙니다.");
                     return;
                 }
             }
-            // [수정됨] 시스템 메시지는 advanceTurn에서 턴 알림으로 대체
-            // broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 턴을 넘겼습니다. (연속 " + passCount + " 패스)");
         }
 
         this.passCount++;
@@ -325,7 +333,6 @@ public class GameRoom {
             currentTimerTask.cancel();
         }
 
-        int maxTurns = 4;
         int timedOutCount = 0;
         do {
             currentPlayerTurnIndex = (currentPlayerTurnIndex + 1) % 4;
@@ -337,16 +344,14 @@ public class GameRoom {
             }
         } while (isTimedOut.get(currentTurnColor));
 
-
         int newTime = remainingTime.get(currentTurnColor) + TIME_BONUS_SECONDS;
         remainingTime.put(currentTurnColor, newTime);
 
         startTurnTimer();
 
-        // [수정됨] 턴 변경 시스템 메시지 전송
         String colorName = getColorName(currentTurnColor);
         String playerName = getPlayerNameByColor(currentTurnColor);
-        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + playerName + " (" + colorName + ") 턴입니다.");
+        broadcastMessage("SYSTEM_MSG" + ":" + playerName + " (" + colorName + ") 턴입니다.");
 
         broadcastGameState();
         broadcastTimeUpdate();
@@ -356,7 +361,7 @@ public class GameRoom {
         currentTimerTask = new TimerTask() {
             @Override
             public void run() {
-                synchronized(GameRoom.this) {
+                synchronized (GameRoom.this) {
                     if (!gameStarted) {
                         this.cancel();
                         return;
@@ -367,11 +372,10 @@ public class GameRoom {
 
                     if (time <= 0) {
                         isTimedOut.put(currentTurnColor, true);
-                        // [수정됨] 시간 초과 시스템 메시지
                         String colorName = getColorName(currentTurnColor);
-                        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + colorName + " 색상 시간 초과! 턴이 강제로 넘어갑니다.");
+                        broadcastMessage("SYSTEM_MSG" + ":" + colorName + " 색상 시간 초과! 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
-                        handlePassTurn(null); // 강제 턴 넘김
+                        handlePassTurn(null);
                         this.cancel();
                     } else {
                         broadcastTimeUpdate();
@@ -383,8 +387,9 @@ public class GameRoom {
     }
 
     private void broadcastTimeUpdate() {
+        // Protocol.S2C_TIME_UPDATE -> "TIME_UPDATE"
         String timeData = String.format("%s:%d,%d,%d,%d",
-                Protocol.S2C_TIME_UPDATE,
+                "TIME_UPDATE",
                 remainingTime.get(1),
                 remainingTime.get(2),
                 remainingTime.get(3),
@@ -395,7 +400,7 @@ public class GameRoom {
 
     private boolean checkGameOver() {
         int activePlayers = 0;
-        for(int i=1; i<=4; i++) {
+        for (int i = 1; i <= 4; i++) {
             if (!isTimedOut.get(i)) activePlayers++;
         }
 
@@ -435,7 +440,7 @@ public class GameRoom {
                 int[] colors = playerColors.get(player);
                 for (int c : colors) {
                     if (isTimedOut.get(c)) {
-                        // 타임아웃 패널티
+                        // 타임아웃 패널티 자리
                     }
                 }
 
@@ -449,9 +454,12 @@ public class GameRoom {
                 int scoreP1 = scores.get(p1);
                 int scoreP2 = scores.get(p2);
 
-                if (scoreP1 < scoreP2) resultMessage = "WINNER:" + p1.getUsername() + " (점수: " + scoreP1 + " vs " + scoreP2 + ")";
-                else if (scoreP2 < scoreP1) resultMessage = "WINNER:" + p2.getUsername() + " (점수: " + scoreP2 + " vs " + scoreP1 + ")";
-                else resultMessage = "DRAW (점수: " + scoreP1 + ")";
+                if (scoreP1 < scoreP2)
+                    resultMessage = "WINNER:" + p1.getUsername() + " (점수: " + scoreP1 + " vs " + scoreP2 + ")";
+                else if (scoreP2 < scoreP1)
+                    resultMessage = "WINNER:" + p2.getUsername() + " (점수: " + scoreP2 + " vs " + scoreP1 + ")";
+                else
+                    resultMessage = "DRAW (점수: " + scoreP1 + ")";
 
             } else { // 4인용
                 List<Map.Entry<ClientHandler, Integer>> sortedPlayers =
@@ -463,17 +471,20 @@ public class GameRoom {
                 for (int i = 0; i < sortedPlayers.size(); i++) {
                     ClientHandler p = sortedPlayers.get(i).getKey();
                     int s = sortedPlayers.get(i).getValue();
-                    rankStr.append((i+1) + "등: " + p.getUsername() + " (" + s + "점) | ");
+                    rankStr.append((i + 1)).append("등: ")
+                            .append(p.getUsername()).append(" (").append(s).append("점) | ");
                 }
                 resultMessage = rankStr.toString();
             }
         }
 
-        broadcastMessage(Protocol.S2C_GAME_OVER + ":" + resultMessage);
+        // Protocol.S2C_GAME_OVER -> "GAME_OVER"
+        broadcastMessage("GAME_OVER" + ":" + resultMessage);
         server.removeRoom(this.roomId);
     }
 
     public void broadcastMessage(String message) {
+        // players는 ArrayList지만, 동시 접근 방지를 위해 락 사용
         synchronized (players) {
             for (ClientHandler client : players) {
                 client.sendMessage(message);
@@ -482,13 +493,16 @@ public class GameRoom {
     }
 
     private void broadcastRoomUpdate() {
-        StringBuilder roomUpdateStr = new StringBuilder(Protocol.S2C_ROOM_UPDATE);
+        // Protocol.S2C_ROOM_UPDATE -> "ROOM_UPDATE"
+        StringBuilder roomUpdateStr = new StringBuilder("ROOM_UPDATE");
         if (players.size() > 0) roomUpdateStr.append(":");
 
         synchronized (players) {
             for (ClientHandler p : players) {
                 String role = p.equals(host) ? "host" : "guest";
-                roomUpdateStr.append("[").append(p.getUsername()).append(",").append(role).append("];");
+                roomUpdateStr.append("[")
+                        .append(p.getUsername()).append(",")
+                        .append(role).append("];");
             }
         }
         if (roomUpdateStr.length() > 0 && roomUpdateStr.charAt(roomUpdateStr.length() - 1) == ';') {
@@ -527,14 +541,16 @@ public class GameRoom {
 
         currentPlayerName += " (" + colorName + ")";
 
-        broadcastMessage(Protocol.S2C_GAME_STATE + ":" + boardData.toString() + ":" + currentPlayerName + ":" + currentTurnColor);
+        // Protocol.S2C_GAME_STATE -> "GAME_STATE"
+        broadcastMessage("GAME_STATE" + ":" + boardData.toString() + ":" + currentPlayerName + ":" + currentTurnColor);
     }
 
     private void sendHandUpdate(ClientHandler player) {
         List<BlokusPiece> hand = playerHands.get(player);
         if (hand == null) return;
 
-        StringBuilder handData = new StringBuilder(Protocol.S2C_HAND_UPDATE);
+        // Protocol.S2C_HAND_UPDATE -> "HAND_UPDATE"
+        StringBuilder handData = new StringBuilder("HAND_UPDATE");
         if (hand.size() > 0) handData.append(":");
 
         for (BlokusPiece piece : hand) {
@@ -551,7 +567,7 @@ public class GameRoom {
         playerColors.clear();
         isFirstMoveForColor.clear();
 
-        for (int i=1; i<=4; i++) isFirstMoveForColor.put(i, true);
+        for (int i = 1; i <= 4; i++) isFirstMoveForColor.put(i, true);
 
         if (playerCountOnStart == 2) {
             ClientHandler p1 = players.get(0);
