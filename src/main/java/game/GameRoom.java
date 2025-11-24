@@ -8,36 +8,46 @@ import java.util.List;
  * 개별 게임방을 관리하는 클래스.
  */
 public class GameRoom {
+    // 방 정보 변수
     private int roomId;
     private String roomName;
     private ClientHandler host;
     private BlokusServer server;
 
-    // [변경] Collections.synchronizedList -> 단순 ArrayList
-    // 동기화는 아래 synchronized 메서드/블록에서 처리
+    // 플레이어 관리 변수
     private List<ClientHandler> players = new ArrayList<>();
 
+    // 게임 상태 플래그 변수
     private boolean gameStarted = false;
+    // 게임 판 상태 확인 변수 숫자로 색상 확인
     private int[][] board = new int[20][20];
 
-    // [변경] Collections.synchronizedMap -> 단순 HashMap
+    // 플레이어가 가지고 있는 블록 리스트
     private Map<ClientHandler, List<BlokusPiece>> playerHands = new HashMap<>();
+    // 플레이어가 담당하는 색상 복수가 될 수 있으니 int 배열
     private Map<ClientHandler, int[]> playerColors = new HashMap<>();
+    // 시작 시 모든 색상에 대해 첫수를 뒀는지 판단하는 변수 Integer = 컬러, Boolean = 색상
     private Map<Integer, Boolean> isFirstMoveForColor = new HashMap<>();
 
     private int playerCountOnStart = 0;
+    // 현재 턴에 해당하는 색상 인덱스 변수
     private int currentPlayerTurnIndex = 0;
+    // 실제 색 번호 변수
     private int currentTurnColor;
+    // 패스 횟수, 게임 종료 판단에 사용
     private int passCount = 0;
 
     // 타이머 관련 변수
     private static final int INITIAL_TIME_SECONDS = 300; // 5분
     private static final int TIME_BONUS_SECONDS = 10; // 턴 시작 시 10초 추가
+
+    // 1초마다 시간 update 하는 변수
     private Timer gameTimer;
     private TimerTask currentTimerTask;
 
-    // [변경] 여기서도 synchronizedMap 제거
+    // 남은 시간 변수
     private Map<Integer, Integer> remainingTime = new HashMap<>();
+    // 시간 초과된 색상 저장 변수
     private Map<Integer, Boolean> isTimedOut = new HashMap<>();
 
     public GameRoom(int roomId, String roomName, ClientHandler host, BlokusServer server) {
@@ -47,8 +57,11 @@ public class GameRoom {
         this.server = server;
     }
 
+    // 방 안 유저 확인 로직
     public synchronized boolean isPlayerInRoom(String username) {
+        // 방 안 플레이어에 한해서
         for (ClientHandler player : players) {
+            // 같은 이름을 가진 유저가 있다면
             if (player.getUsername().equalsIgnoreCase(username)) {
                 return true;
             }
@@ -56,7 +69,9 @@ public class GameRoom {
         return false;
     }
 
+    // 플레이어 추가 로직
     public synchronized void addPlayer(ClientHandler player) {
+        //플레이어가 4명보다 적으며 게임 시작을 안했을 시
         if (!players.contains(player) && players.size() < 4 && !gameStarted) {
             players.add(player);
             player.setCurrentRoom(this);
@@ -64,61 +79,78 @@ public class GameRoom {
         }
     }
 
+    // 플레이어 제거 로직
     public synchronized boolean removePlayer(ClientHandler player) {
+
         boolean wasHost = player.equals(host);
         players.remove(player);
         player.setCurrentRoom(null);
 
+        // 게임 시작 시
         if (gameStarted) {
-            // Protocol.S2C_SYSTEM_MSG -> "SYSTEM_MSG"
             broadcastMessage("SYSTEM_MSG" + ":" + player.getUsername() + "님이 게임 중 나갔습니다. (패배 처리)");
+            // 만약 플레이어가 2보다 줄어든다면
             if (players.size() < 2) {
-                handleGameOver(true); // 강제 종료
+                // 강제 종료
+                handleGameOver(true);
             }
         }
 
+        // 플레이어가 모두 비었다면
         if (players.isEmpty()) {
             return true; // 방 제거 신호
         }
 
+        // 플레이어가 호스트이면서 모든 플레이어가 나간것이 아니라면
         if (wasHost && !players.isEmpty()) {
             host = players.get(0);
             broadcastMessage("SYSTEM_MSG" + ":" + host.getUsername() + "님이 새 방장이 되었습니다.");
         }
 
+        // 게임 시작 전
         if (!gameStarted) {
             broadcastRoomUpdate();
         }
         return false;
     }
 
+    // 게임 시작 로직
     public synchronized void startGame(ClientHandler starter) {
+        // 호스트가 아니라면
         if (!starter.equals(host)) {
             starter.sendMessage("SYSTEM_MSG" + ":방장만 게임을 시작할 수 있습니다.");
             return;
         }
+        // 게임이 시작했다면
         if (gameStarted) {
             starter.sendMessage("SYSTEM_MSG" + ":이미 게임이 시작되었습니다.");
             return;
         }
+        // 플레이어가 2명이나 4명이 아니라면
         if (players.size() != 2 && players.size() != 4) {
             starter.sendMessage("SYSTEM_MSG" + ":2명 또는 4명일 때만 시작할 수 있습니다.");
             return;
         }
 
+        // 변수 초기화 : 게임 중, 초기 플레이어 명 수, 게임 판, 패스 횟수 0
         gameStarted = true;
         playerCountOnStart = players.size();
         this.board = new int[20][20];
         this.passCount = 0;
 
+        // 4가지 색의 기본 시간 할당 및 시간 초과 초기화
         for (int i = 1; i <= 4; i++) {
             remainingTime.put(i, INITIAL_TIME_SECONDS);
             isTimedOut.put(i, false);
         }
+
         this.gameTimer = new Timer();
 
+        // 플레이어들의 색상 및 블록 초기화
+        // playerColors의 값을 2인용, 4인용에 따라 구별해서 할당
         initializePlayerHandsAndColors();
 
+        // 각 플레이어에게 게임 시작 및 본인 색 정보 전송
         for (int i = 0; i < players.size(); i++) {
             ClientHandler player = players.get(i);
 
@@ -138,22 +170,28 @@ public class GameRoom {
         advanceTurn();
     }
 
+    // 플레이어 강퇴 로직
     public synchronized void kickPlayer(ClientHandler kicker, String targetUsername) {
+        // 방장이 아니라면
         if (!kicker.equals(host)) {
             kicker.sendMessage("SYSTEM_MSG" + ":방장만 강퇴할 수 있습니다.");
             return;
         }
+        // 방장 자신이 타겟이라면
         if (kicker.getUsername().equals(targetUsername)) {
             kicker.sendMessage("SYSTEM_MSG" + ":자기 자신을 강퇴할 수 없습니다.");
             return;
         }
+        // 게임을 시작했다면
         if (gameStarted) {
             kicker.sendMessage("SYSTEM_MSG" + ":게임 시작 후에는 강퇴할 수 없습니다.");
             return;
         }
 
         ClientHandler target = null;
+        // 현재 방의 플레이어에 한하여
         for (ClientHandler p : players) {
+            // 타겟과 이름이 같다면
             if (p.getUsername().equals(targetUsername)) {
                 target = p;
                 break;
@@ -161,7 +199,6 @@ public class GameRoom {
         }
 
         if (target != null) {
-            // Protocol.S2C_KICKED -> "KICKED"
             target.sendMessage("KICKED");
             removePlayer(target);
             server.addClientToLobby(target);
@@ -171,6 +208,7 @@ public class GameRoom {
         }
     }
 
+    // 블록 놓기 로직
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
         if (isTimedOut.get(currentTurnColor)) {
             player.sendMessage("INVALID_MOVE" + ":시간이 초과되어 이 색상으로는 놓을 수 없습니다.");
