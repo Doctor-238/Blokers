@@ -30,32 +30,65 @@ public class BlokusPiece {
         SHAPE_DATA.put("I4", new int[][]{{1, 1, 1, 1}});
         SHAPE_DATA.put("I5", new int[][]{{1, 1, 1, 1, 1}});
 
-        SHAPE_DATA.put("L3", new int[][]{{1, 0}, {1, 1}});
-        SHAPE_DATA.put("L4", new int[][]{{1, 0, 0}, {1, 1, 1}});
-        SHAPE_DATA.put("L5", new int[][]{{1, 0, 0, 0}, {1, 1, 1, 1}});
+        SHAPE_DATA.put("L3", new int[][]{{1, 0},
+                                         {1, 1}});
+        SHAPE_DATA.put("L4", new int[][]{{1, 0, 0},
+                                         {1, 1, 1}});
+        SHAPE_DATA.put("L5", new int[][]{{1, 0, 0, 0},
+                                         {1, 1, 1, 1}});
 
-        SHAPE_DATA.put("T4", new int[][]{{1, 1, 1}, {0, 1, 0}});
-        SHAPE_DATA.put("T5", new int[][]{{1, 1, 1}, {0, 1, 0}, {0, 1, 0}});
+        SHAPE_DATA.put("T4", new int[][]{{1, 1, 1},
+                                         {0, 1, 0}});
+        SHAPE_DATA.put("T5", new int[][]{{1, 1, 1},
+                                         {0, 1, 0},
+                                         {0, 1, 0}});
 
-        SHAPE_DATA.put("O4", new int[][]{{1, 1}, {1, 1}});
+        SHAPE_DATA.put("O4", new int[][]{{1, 1},
+                                         {1, 1}});
 
-        SHAPE_DATA.put("Z4", new int[][]{{1, 1, 0}, {0, 1, 1}});
-        SHAPE_DATA.put("Z5", new int[][]{{1, 1, 0}, {0, 1, 0}, {0, 1, 1}});
+        SHAPE_DATA.put("Z4", new int[][]{{1, 1, 0},
+                                         {0, 1, 1}});
+        SHAPE_DATA.put("Z5", new int[][]{{1, 1, 0},
+                                         {0, 1, 0},
+                                         {0, 1, 1}});
 
-        SHAPE_DATA.put("F5", new int[][]{{0, 1, 1}, {1, 1, 0}, {0, 1, 0}});
-        SHAPE_DATA.put("N", new int[][]{{1, 1, 0, 0}, {0, 1, 1, 1}});
-        SHAPE_DATA.put("P", new int[][]{{1, 1}, {1, 1}, {1, 0}});
-        SHAPE_DATA.put("U", new int[][]{{1, 0, 1}, {1, 1, 1}});
-        SHAPE_DATA.put("V5", new int[][]{{1, 0, 0}, {1, 0, 0}, {1, 1, 1}});
-        SHAPE_DATA.put("W", new int[][]{{1, 0, 0}, {1, 1, 0}, {0, 1, 1}});
-        SHAPE_DATA.put("X", new int[][]{{0, 1, 0}, {1, 1, 1}, {0, 1, 0}});
-        SHAPE_DATA.put("Y", new int[][]{{1, 1, 1, 1}, {0, 1, 0, 0}});
+        SHAPE_DATA.put("F5", new int[][]{{0, 1, 1},
+                                         {1, 1, 0},
+                                         {0, 1, 0}});
+
+        SHAPE_DATA.put("N", new int[][]{{1, 1, 0, 0},
+                                        {0, 1, 1, 1}});
+
+        SHAPE_DATA.put("P", new int[][]{{1, 1},
+                                        {1, 1},
+                                        {1, 0}});
+
+        SHAPE_DATA.put("U", new int[][]{{1, 0, 1},
+                                        {1, 1, 1}});
+
+        SHAPE_DATA.put("V5", new int[][]{{1, 0, 0},
+                                         {1, 0, 0},
+                                         {1, 1, 1}});
+
+        SHAPE_DATA.put("W", new int[][]{{1, 0, 0},
+                                        {1, 1, 0},
+                                        {0, 1, 1}});
+
+        SHAPE_DATA.put("X", new int[][]{{0, 1, 0},
+                                        {1, 1, 1},
+                                        {0, 1, 0}});
+
+        SHAPE_DATA.put("Y", new int[][]{{1, 1, 1, 1},
+                                        {0, 1, 0, 0}});
     }
 
+    // 모양 id
     private String id;
+    // 회전 시 사용
     private int[][] shape;
     private int color;
-    private int size; // 이 조각을 구성하는 칸 수
+    // 이 조각을 구성하는 칸 수
+    private int size;
 
     public BlokusPiece(String id, int color) {
         this.id = id;
@@ -65,7 +98,7 @@ public class BlokusPiece {
         if (originalShape == null) {
             throw new IllegalArgumentException("알 수 없는 조각 ID: " + id);
         }
-
+        // 모양 복사
         this.shape = new int[originalShape.length][originalShape[0].length];
         int calculatedSize = 0;
         for(int i=0; i<originalShape.length; i++) {
@@ -79,6 +112,7 @@ public class BlokusPiece {
         this.size = calculatedSize;
     }
 
+    // 임시 조각을 회전시키거나 좌표 검사 시 사용
     public BlokusPiece(BlokusPiece other) {
         this.id = other.id;
         this.color = other.color;
@@ -89,9 +123,6 @@ public class BlokusPiece {
         }
     }
 
-    /**
-     * 조각을 시계 방향으로 90도 회전시킵니다.
-     */
     public void rotate() {
         if (shape == null) return;
         int rows = shape.length;
@@ -105,8 +136,6 @@ public class BlokusPiece {
         }
         this.shape = newShape;
     }
-
-    // [수정됨] 뒤집기(flip) 메소드 제거
 
     // Getter
     public String getId() { return id; }
