@@ -161,7 +161,6 @@ public class GameRoom {
             }
             myColorsStr = myColorsStr.substring(0, myColorsStr.length() - 1);
 
-            // Protocol.S2C_GAME_START -> "GAME_START"
             player.sendMessage("GAME_START" + ":" + playerCountOnStart + ":" + myColorsStr);
             sendHandUpdate(player);
         }
@@ -210,11 +209,12 @@ public class GameRoom {
 
     // 블록 놓기 로직
     public synchronized void handlePlaceBlock(ClientHandler player, String data) {
+        //시간 초과 시
         if (isTimedOut.get(currentTurnColor)) {
             player.sendMessage("INVALID_MOVE" + ":시간이 초과되어 이 색상으로는 놓을 수 없습니다.");
             return;
         }
-
+        // 4인용 2인용에 따라서 그리고 현재 턴의 플레이어만 놓기 가능
         if (playerCountOnStart == 4) {
             if (!players.get(currentPlayerTurnIndex).equals(player)) {
                 player.sendMessage("INVALID_MOVE" + ":당신의 턴이 아닙니다.");
@@ -227,17 +227,24 @@ public class GameRoom {
             }
         }
 
+        //  ex) p5:10:5:3으로 데이터 받을 시
         String[] parts = data.split(":");
         if (parts.length < 4) {
             player.sendMessage("INVALID_MOVE" + ":잘못된 요청입니다.");
             return;
         }
 
+        // p5 = pieceId 어떤 조각
         String pieceId = parts[0];
+
+        // x, y는 보드의 좌표
         int x = Integer.parseInt(parts[1]);
         int y = Integer.parseInt(parts[2]);
+
+        // rotation은 회전의 횟수를 의미ㅏㅎㄴㄷ
         int rotation = Integer.parseInt(parts[3]);
 
+        // 색 조합을
         BlokusPiece pieceToPlace = null;
         List<BlokusPiece> hand = playerHands.get(player);
         for (BlokusPiece piece : hand) {
@@ -298,8 +305,6 @@ public class GameRoom {
             advanceTurn();
         }
     }
-
-    // --- 비공개 헬퍼 메소드 ---
 
     private boolean isValidMove(BlokusPiece piece, int x, int y, int color) {
         if (isTimedOut.get(color)) {
@@ -425,7 +430,6 @@ public class GameRoom {
     }
 
     private void broadcastTimeUpdate() {
-        // Protocol.S2C_TIME_UPDATE -> "TIME_UPDATE"
         String timeData = String.format("%s:%d,%d,%d,%d",
                 "TIME_UPDATE",
                 remainingTime.get(1),
@@ -516,7 +520,6 @@ public class GameRoom {
             }
         }
 
-        // Protocol.S2C_GAME_OVER -> "GAME_OVER"
         broadcastMessage("GAME_OVER" + ":" + resultMessage);
         server.removeRoom(this.roomId);
     }
@@ -531,7 +534,6 @@ public class GameRoom {
     }
 
     private void broadcastRoomUpdate() {
-        // Protocol.S2C_ROOM_UPDATE -> "ROOM_UPDATE"
         StringBuilder roomUpdateStr = new StringBuilder("ROOM_UPDATE");
         if (players.size() > 0) roomUpdateStr.append(":");
 
@@ -579,7 +581,6 @@ public class GameRoom {
 
         currentPlayerName += " (" + colorName + ")";
 
-        // Protocol.S2C_GAME_STATE -> "GAME_STATE"
         broadcastMessage("GAME_STATE" + ":" + boardData.toString() + ":" + currentPlayerName + ":" + currentTurnColor);
     }
 
@@ -587,7 +588,6 @@ public class GameRoom {
         List<BlokusPiece> hand = playerHands.get(player);
         if (hand == null) return;
 
-        // Protocol.S2C_HAND_UPDATE -> "HAND_UPDATE"
         StringBuilder handData = new StringBuilder("HAND_UPDATE");
         if (hand.size() > 0) handData.append(":");
 
