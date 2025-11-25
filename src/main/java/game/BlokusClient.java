@@ -9,21 +9,24 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 
-/**
- * 블로커스 클라이언트 메인 클래스.
- */
 public class BlokusClient extends JFrame {
 
+    //서버 주소 및 포트 번호
     private String serverHost = "localhost";
     private int serverPort = 12345;
 
+    // 서버와 송수신할 소켓 및 스트림,
     private Socket socket;
     private PrintWriter out;
     private BufferedReader in;
+
+    // 서버 명령 읽기 전용 스레드
     private ClientReceiver receiver;
 
+    //유저 이름
     private String username;
 
+    //GUI 구조
     private CardLayout cardLayout;
     private JPanel mainPanel;
     private LoginScreen loginScreen;
@@ -58,7 +61,9 @@ public class BlokusClient extends JFrame {
         cardLayout.show(mainPanel, "LOGIN");
     }
 
+    //로그인 로직
     public void attemptLogin(String username) {
+        //만약 유저 이름이 비어있다면
         if (username.trim().isEmpty()) {
             JOptionPane.showMessageDialog(this, "이름을 입력하세요.", "오류", JOptionPane.ERROR_MESSAGE);
             return;
@@ -72,7 +77,6 @@ public class BlokusClient extends JFrame {
             receiver = new ClientReceiver(in, this);
             receiver.start();
 
-            // Protocol.C2S_LOGIN -> "LOGIN"
             sendMessage("LOGIN" + ":" + username);
 
         } catch (IOException e) {
@@ -80,6 +84,7 @@ public class BlokusClient extends JFrame {
         }
     }
 
+    //연결 해제 시
     public void handleConnectionLost() {
         JOptionPane.showMessageDialog(this, "서버와의 연결이 끊겼습니다. 로그인 화면으로 돌아갑니다.", "연결 오류", JOptionPane.ERROR_MESSAGE);
 
@@ -95,74 +100,72 @@ public class BlokusClient extends JFrame {
 
     public void handleServerMessage(String message) {
         System.out.println("서버 (S2C): " + message);
+        //메세지 파싱
         String[] parts = message.split(":", 2);
+
+        //명령어
         String command = parts[0];
+        //데이터
         String data = (parts.length > 1) ? parts[1] : null;
 
-        // invokeLater 없이 바로 처리 (수업 스타일)
         switch (command) {
-            case "LOGIN_SUCCESS": // Protocol.S2C_LOGIN_SUCCESS
+            case "LOGIN_SUCCESS":
                 this.username = loginScreen.getUsername();
                 cardLayout.show(mainPanel, "LOBBY");
-                // Protocol.C2S_GET_ROOM_LIST
                 sendMessage("GET_ROOM_LIST");
                 break;
-            case "LOGIN_FAIL": // Protocol.S2C_LOGIN_FAIL
+            case "LOGIN_FAIL":
                 JOptionPane.showMessageDialog(this, "로그인 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
                 handleConnectionLost();
                 break;
-            case "ROOM_LIST": // Protocol.S2C_ROOM_LIST
+            case "ROOM_LIST":
                 lobbyScreen.updateRoomList(data);
                 break;
-            case "JOIN_SUCCESS": // Protocol.S2C_JOIN_SUCCESS
+            case "JOIN_SUCCESS":
                 roomScreen.setRoomName(data.split(":")[1]);
                 roomScreen.clearChat();
                 cardLayout.show(mainPanel, "ROOM");
                 break;
-            case "JOIN_FAIL": // Protocol.S2C_JOIN_FAIL
+            case "JOIN_FAIL":
                 JOptionPane.showMessageDialog(this, "방 참여 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
                 break;
-            case "ROOM_UPDATE": // Protocol.S2C_ROOM_UPDATE
+            case "ROOM_UPDATE":
                 roomScreen.updatePlayerList(data, username);
                 break;
-            case "KICKED": // Protocol.S2C_KICKED
+            case "KICKED":
                 JOptionPane.showMessageDialog(this, "방에서 강퇴당했습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
                 cardLayout.show(mainPanel, "LOBBY");
-                // Protocol.C2S_GET_ROOM_LIST
                 sendMessage("GET_ROOM_LIST");
                 break;
-            case "GAME_START": // Protocol.S2C_GAME_START
+            case "GAME_START":
                 gameScreen.initializeGame(data);
                 gameScreen.clearChat();
                 cardLayout.show(mainPanel, "GAME");
                 break;
-            case "GAME_STATE": // Protocol.S2C_GAME_STATE
+            case "GAME_STATE":
                 gameScreen.updateGameState(data);
                 break;
-            case "HAND_UPDATE": // Protocol.S2C_HAND_UPDATE
+            case "HAND_UPDATE":
                 gameScreen.updatePlayerHand(data);
                 break;
-            // 타이머 수신
-            case "TIME_UPDATE": // Protocol.S2C_TIME_UPDATE
+            case "TIME_UPDATE":
                 gameScreen.updateTimer(data);
                 break;
-            case "INVALID_MOVE": // Protocol.S2C_INVALID_MOVE
+            case "INVALID_MOVE":
                 JOptionPane.showMessageDialog(this, "잘못된 이동: " + data, "알림", JOptionPane.WARNING_MESSAGE);
                 break;
-            case "GAME_OVER": // Protocol.S2C_GAME_OVER
+            case "GAME_OVER":
                 JOptionPane.showMessageDialog(this, "게임 종료!\n" + data, "게임 종료", JOptionPane.INFORMATION_MESSAGE);
                 cardLayout.show(mainPanel, "LOBBY");
-                // Protocol.C2S_GET_ROOM_LIST
                 sendMessage("GET_ROOM_LIST");
                 break;
-            case "CHAT": // Protocol.S2C_CHAT
+            case "CHAT":
                 roomScreen.appendChatMessage(data);
                 gameScreen.appendChatMessage(data);
                 break;
-            case "SYSTEM_MSG": // Protocol.S2C_SYSTEM_MSG
+            case "SYSTEM_MSG":
                 if (data != null && data.contains("로비로 이동합니다.")) {
                     cardLayout.show(mainPanel, "LOBBY");
-                    // Protocol.C2S_GET_ROOM_LIST
                     sendMessage("GET_ROOM_LIST");
                 } else {
                     String sysMsg = "[시스템]:" + data;
@@ -182,14 +185,10 @@ public class BlokusClient extends JFrame {
     public String getUsername() { return this.username; }
 
     public static void main(String[] args) {
-        // invokeLater 없이 바로 생성
         new BlokusClient().setVisible(true);
     }
 }
 
-/**
- * 서버 메시지 수신 스레드
- */
 class ClientReceiver extends Thread {
     private BufferedReader in;
     private BlokusClient client;
@@ -213,9 +212,7 @@ class ClientReceiver extends Thread {
     }
 }
 
-
-// --- UI 패널들 ---
-
+//로그인 UI
 class LoginScreen extends JPanel {
     private BlokusClient client;
     private JTextField usernameField;
@@ -228,7 +225,6 @@ class LoginScreen extends JPanel {
         add(usernameField);
         JButton loginButton = new JButton("로그인/접속");
 
-        // 람다 -> 익명 클래스
         loginButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -243,6 +239,7 @@ class LoginScreen extends JPanel {
     }
 }
 
+//로비 UI
 class LobbyScreen extends JPanel {
     private BlokusClient client;
     private JList<String> roomList;
@@ -266,7 +263,6 @@ class LobbyScreen extends JPanel {
             public void actionPerformed(ActionEvent e) {
                 String roomName = roomNameField.getText();
                 if (!roomName.trim().isEmpty()) {
-                    // Protocol.C2S_CREATE_ROOM
                     client.sendMessage("CREATE_ROOM" + ":" + roomName);
                 }
             }
@@ -281,7 +277,6 @@ class LobbyScreen extends JPanel {
                 if (selected != null && selected.startsWith("[ID:")) {
                     try {
                         String roomId = selected.split("]")[0].split(":")[1].trim();
-                        // Protocol.C2S_JOIN_ROOM
                         client.sendMessage("JOIN_ROOM" + ":" + roomId);
                     } catch (Exception ex) {
                         System.err.println("잘못된 방 선택: " + selected);
@@ -295,7 +290,6 @@ class LobbyScreen extends JPanel {
         refreshButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                // Protocol.C2S_GET_ROOM_LIST
                 client.sendMessage("GET_ROOM_LIST");
             }
         });
