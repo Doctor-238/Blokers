@@ -384,7 +384,6 @@ class RoomScreen extends JPanel {
                 String selected = playerList.getSelectedValue();
                 if (selected != null) {
                     String targetUser = selected.split(" ")[0];
-                    // Protocol.C2S_KICK_PLAYER
                     client.sendMessage("KICK" + ":" + targetUser);
                 }
             }
@@ -395,7 +394,6 @@ class RoomScreen extends JPanel {
         leaveButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                // Protocol.C2S_LEAVE_ROOM
                 client.sendMessage("LEAVE_ROOM");
             }
         });
@@ -407,7 +405,6 @@ class RoomScreen extends JPanel {
     private void sendChat() {
         String message = chatField.getText();
         if (!message.trim().isEmpty()) {
-            // Protocol.C2S_CHAT
             client.sendMessage("CHAT" + ":" + message);
             chatField.setText("");
         }
@@ -427,20 +424,28 @@ class RoomScreen extends JPanel {
     }
 
     public void updatePlayerList(String data, String myUsername) {
+
+        //리스트 초기화
         playerListModel.clear();
+
+        //방장 판단 플래그 변수
         boolean amIHost = false;
 
         if (data == null || data.isEmpty()) return;
 
         String[] players = data.split(";");
+        //플레이어에 한해 ex) player = "[aaa,host]"
         for (String player : players) {
             String playerInfo = player.substring(1, player.length() - 1);
             String[] parts = playerInfo.split(",");
             if (parts.length < 2) continue;
+            // aaa
             String username = parts[0];
+            // host
             String role = parts[1];
 
             String displayText = username;
+            //방장일 시
             if (role.equals("host")) {
                 displayText += " (방장)";
                 if (username.equals(myUsername)) {
@@ -449,33 +454,33 @@ class RoomScreen extends JPanel {
             }
             playerListModel.addElement(displayText);
         }
-
+        //방장일 시 활성화 되는 버튼
         startButton.setVisible(amIHost);
         kickButton.setVisible(amIHost);
     }
 }
 
-// 자동 줄바꿈을 위한 WrapLayout (GUI 헬퍼, 이벤트랑 무관)
+// 레이아웃 매니저
 class WrapLayout extends FlowLayout {
-    private Dimension preferredLayoutSize;
 
+    // 생성자
     public WrapLayout() {
         super();
     }
-
     public WrapLayout(int align) {
         super(align);
     }
-
     public WrapLayout(int align, int hgap, int vgap) {
         super(align, hgap, vgap);
     }
 
+    // 컨테이너의 이상적 크기 리턴
     @Override
     public Dimension preferredLayoutSize(Container target) {
         return layoutSize(target, true);
     }
 
+    // 컨테이너의 최소 크기 리턴
     @Override
     public Dimension minimumLayoutSize(Container target) {
         Dimension minimum = layoutSize(target, false);
@@ -484,12 +489,14 @@ class WrapLayout extends FlowLayout {
     }
 
     private Dimension layoutSize(Container target, boolean preferred) {
+        //레이아웃 계산 중 락
         synchronized (target.getTreeLock()) {
 
-            // 스크롤 패널의 뷰포트 너비 사용
+            // 현재 스크롤 패널의 뷰포트 너비 사용
             int targetWidth = target.getSize().width;
             Container scrollPaneContainer = SwingUtilities.getAncestorOfClass(JScrollPane.class, target);
             JScrollPane scrollPane = null;
+            // 만약 타겟이 스크롤팬 안에 있다면 줄바꿈 기준을 스크롤 영역으로
             if (scrollPaneContainer != null) {
                 scrollPane = (JScrollPane) scrollPaneContainer;
                 targetWidth = scrollPane.getViewport().getSize().width;
@@ -498,12 +505,17 @@ class WrapLayout extends FlowLayout {
             if (targetWidth == 0)
                 targetWidth = Integer.MAX_VALUE;
 
+            //수평
             int hgap = getHgap();
+            //수직
             int vgap = getVgap();
+            //여백
             Insets insets = target.getInsets();
+            //좌우 여백 + 좌우 양쪽의 gqp
             int horizontalInsetsAndGap = insets.left + insets.right + (hgap * 2);
+            //컴포넌트의 최대 가로 길이
             int maxWidth = targetWidth - horizontalInsetsAndGap;
-
+            //최종 반환되는 전체 레이아웃
             Dimension dim = new Dimension(0, 0);
             int rowWidth = 0;
             int rowHeight = 0;
@@ -511,13 +523,17 @@ class WrapLayout extends FlowLayout {
             int nmembers = target.getComponentCount();
             for (int i = 0; i < nmembers; i++) {
                 Component m = target.getComponent(i);
+                //보이지 않는 컴포넌트는 제외
                 if (m.isVisible()) {
+                    //true면 선호 크기 기준 false면 최소 크기 기준
                     Dimension d = preferred ? m.getPreferredSize() : m.getMinimumSize();
+                    // 현재 줄에 더했을 때 최대 넓이를 넘어가면 행 하나 확정
                     if (rowWidth + d.width > maxWidth && rowWidth > 0) {
                         addRow(dim, rowWidth, rowHeight);
                         rowWidth = 0;
                         rowHeight = 0;
                     }
+                    // 첫 컴포넌트가 아ㅣㄴ면 앞에 수평 간격 추가
                     if (rowWidth != 0) {
                         rowWidth += hgap;
                     }
@@ -537,7 +553,7 @@ class WrapLayout extends FlowLayout {
             return dim;
         }
     }
-
+    // 한줄의 결과를 dim에 반영
     private void addRow(Dimension dim, int rowWidth, int rowHeight) {
         dim.width = Math.max(dim.width, rowWidth);
         if (dim.height > 0) {
