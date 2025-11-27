@@ -10,27 +10,16 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
+import java.io.PrintStream;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.util.Collections;
-import java.util.Enumeration;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class BlokusClient extends JFrame {
@@ -51,7 +40,7 @@ public class BlokusClient extends JFrame {
 
     private boolean handlingLoginFail = false;
 
-    private static final String CONFIG_FILE = "server.txt";
+    private static final String CONFIG_FILE = "src/main/resources/server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -255,6 +244,11 @@ public class BlokusClient extends JFrame {
                         gameScreen.clearChat();
                         cardLayout.show(mainPanel, "GAME");
                         break;
+                    case Protocol.S2C_GAME_START_PEERLESS:
+                        gameScreen.initializePeerlessGame(data);
+                        gameScreen.clearChat();
+                        cardLayout.show(mainPanel, "GAME");
+                        break;
                     case Protocol.S2C_GAME_STATE:
                         gameScreen.updateGameState(data);
                         break;
@@ -268,7 +262,39 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_INVALID_MOVE:
                         JOptionPane.showMessageDialog(BlokusClient.this, "잘못된 이동: " + data, "알림", JOptionPane.WARNING_MESSAGE);
                         break;
+
+                    case Protocol.S2C_PEERLESS_PREP_START:
+                        gameScreen.setPeerlessTimer("준비 시간: 20초 (첫 블록을 배치하세요)", Color.CYAN);
+                        break;
+                    case Protocol.S2C_PEERLESS_PREP_TIMER_UPDATE:
+                        String[] prepData = data.split(":");
+                        String time = prepData[0];
+                        String phase = prepData[1];
+                        if (phase.equals("PREP")) {
+                            gameScreen.setPeerlessTimer("준비 시간: " + time + "초", Color.CYAN);
+                        } else if (phase.equals("COUNTDOWN")) {
+                            gameScreen.setPeerlessTimer("게임 시작 " + time + "초 전!", Color.ORANGE);
+                        }
+                        break;
+                    case Protocol.S2C_PEERLESS_MAIN_START:
+                        gameScreen.setPeerlessTimer("게임 시작!", Color.GREEN);
+                        break;
+                    case Protocol.S2C_PEERLESS_TIMER_UPDATE:
+                        gameScreen.setPeerlessTimer("남은 시간: " + gameScreen.formatTime(Integer.parseInt(data)), Color.WHITE);
+                        break;
+                    case Protocol.S2C_PEERLESS_PLACE_SUCCESS:
+                        String[] pieceData = data.split(":");
+                        gameScreen.removePieceFromHand(pieceData[0], Integer.parseInt(pieceData[1]));
+                        break;
+                    case Protocol.S2C_PEERLESS_PLACE_FAIL:
+                        JOptionPane.showMessageDialog(BlokusClient.this, "배치 실패: " + data, "알림", JOptionPane.WARNING_MESSAGE);
+                        break;
+                    case Protocol.S2C_PEERLESS_BOARD_UPDATE:
+                        gameScreen.updateBoardState(data);
+                        break;
+
                     case Protocol.S2C_GAME_OVER:
+                        gameScreen.setGameFinished(true);
                         JOptionPane.showMessageDialog(BlokusClient.this, "게임 종료!\n" + data, "게임 종료", JOptionPane.INFORMATION_MESSAGE);
                         cardLayout.show(mainPanel, "LOBBY");
                         sendMessage(Protocol.C2S_GET_LEADERBOARD);
@@ -310,7 +336,12 @@ public class BlokusClient extends JFrame {
     public String getUsername() { return username; }
 
     public static void main(String[] args) {
-        System.setProperty("file.encoding", "UTF-8");
+        try {
+            System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
+            System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, "UTF-8"));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -528,9 +559,26 @@ class LobbyScreen extends JPanel {
     }
 
     private void createRoom() {
-        String roomName = JOptionPane.showInputDialog(this, "생성할 방의 이름을 입력하세요:", "방 만들기", JOptionPane.PLAIN_MESSAGE);
-        if (roomName != null && !roomName.trim().isEmpty()) {
-            client.sendMessage(Protocol.C2S_CREATE_ROOM + ":" + roomName);
+        JPanel panel = new JPanel(new GridLayout(0, 1));
+        JTextField roomNameField = new JTextField(15);
+        JComboBox<String> modeComboBox = new JComboBox<>(new String[]{"클래식 (Classic)", "피어리스 (Peerless)"});
+
+        panel.add(new JLabel("방 이름:"));
+        panel.add(roomNameField);
+        panel.add(new JLabel("게임 모드:"));
+        panel.add(modeComboBox);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "방 만들기", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+        if (result == JOptionPane.OK_OPTION) {
+            String roomName = roomNameField.getText();
+            String mode = (modeComboBox.getSelectedIndex() == 0) ? "CLASSIC" : "PEERLESS";
+
+            if (roomName != null && !roomName.trim().isEmpty()) {
+                client.sendMessage(Protocol.C2S_CREATE_ROOM + ":" + roomName + ":" + mode);
+            } else {
+                JOptionPane.showMessageDialog(this, "방 이름을 입력해야 합니다.", "오류", JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
 
@@ -587,8 +635,9 @@ class LobbyScreen extends JPanel {
             if (room.isBlank()) continue;
             String roomInfo = room.substring(1, room.length() - 1);
             String[] parts = roomInfo.split(",");
-            if (parts.length >= 3) {
-                roomListModel.addElement(String.format("[ID:%s] %s (%s)", parts[0], parts[1], parts[2]));
+            if (parts.length >= 4) {
+                String modeDisplay = parts[3].equalsIgnoreCase("PEERLESS") ? "피어리스" : "클래식";
+                roomListModel.addElement(String.format("[ID:%s] %s (%s) - %s", parts[0], parts[1], parts[2], modeDisplay));
             }
         }
     }
@@ -603,7 +652,7 @@ class RoomScreen extends JPanel {
     private final JButton kickButton;
 
     private JTabbedPane chatTabs;
-    private JTextArea chatArea;
+    private JTextPane chatAreaPane; // JTextArea -> JTextPane
     private JTextPane systemArea;
     private final JTextField chatField;
 
@@ -615,6 +664,10 @@ class RoomScreen extends JPanel {
     private Style styleYellow;
     private Style styleGreen;
     private Style styleWhisper;
+
+    // Styles for the main chat pane
+    private Style styleChatDefault;
+    private Style styleChatWhisper_Room;
 
     public RoomScreen(BlokusClient client) {
         this.client = client;
@@ -630,10 +683,21 @@ class RoomScreen extends JPanel {
         JPanel chatPanel = new JPanel(new BorderLayout());
         chatTabs = new JTabbedPane();
 
-        chatArea = new JTextArea();
-        chatArea.setEditable(false);
-        chatArea.setLineWrap(true);
-        chatTabs.addTab("채팅", new JScrollPane(chatArea));
+        // JTextArea -> JTextPane
+        chatAreaPane = new JTextPane();
+        chatAreaPane.setEditable(false);
+        StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+        styleChatDefault = chatAreaPane.addStyle("ChatDefault", null);
+        StyleConstants.setForeground(styleChatDefault, Color.BLACK);
+        StyleConstants.setFontFamily(styleChatDefault, "맑은 고딕");
+        StyleConstants.setFontSize(styleChatDefault, 12);
+
+        styleChatWhisper_Room = chatAreaPane.addStyle("ChatWhisper", styleChatDefault);
+        StyleConstants.setForeground(styleChatWhisper_Room, Color.MAGENTA);
+        StyleConstants.setItalic(styleChatWhisper_Room, true);
+
+        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane)); // Add new pane
+
 
         systemArea = new JTextPane();
         systemArea.setEditable(false);
@@ -761,14 +825,18 @@ class RoomScreen extends JPanel {
 
     public void appendChatMessage(String data, boolean isWhisper) {
         String message = data.replaceFirst(":", ": ");
-        StyledDocument doc = systemArea.getStyledDocument();
 
         try {
             if (isWhisper) {
-                doc.insertString(doc.getLength(), message + "\n", styleWhisper);
-                systemArea.setCaretPosition(systemArea.getDocument().getLength());
-                chatTabs.setSelectedComponent(systemArea.getParent().getParent());
+                // Add to main chat pane with whisper style
+                StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+                chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatWhisper_Room);
+                chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
+
             } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+                // Add to system pane
+                StyledDocument doc = systemArea.getStyledDocument();
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
                     doc.insertString(doc.getLength(), parts[0] + "→ ", styleDefault);
@@ -799,16 +867,18 @@ class RoomScreen extends JPanel {
                 chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
             } else {
-                chatArea.append(message + "\n");
-                chatArea.setCaretPosition(chatArea.getDocument().getLength());
-                chatTabs.setSelectedComponent(chatArea.getParent().getParent());
+                // Add regular chat to main chat pane
+                StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+                chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatDefault);
+                chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
+                chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
             }
         } catch (Exception e) {
         }
     }
 
     public void clearChat() {
-        chatArea.setText("");
+        chatAreaPane.setText("");
         systemArea.setText("");
     }
 

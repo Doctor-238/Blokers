@@ -1,11 +1,13 @@
 package game;
 
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
@@ -26,7 +28,12 @@ public class BlokusServer {
     private static final String SCORES_FILE = "blokus_scores.properties";
 
     public static void main(String[] args) {
-        System.setProperty("file.encoding", "UTF-8");
+        try {
+            System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
+            System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, "UTF-8"));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         new BlokusServer().startServer();
     }
 
@@ -133,15 +140,15 @@ public class BlokusServer {
         }
     }
 
-    public GameRoom createRoom(String roomName, ClientHandler host) {
+    public GameRoom createRoom(String roomName, ClientHandler host, GameRoom.GameMode gameMode) {
         int roomId = roomIdCounter.incrementAndGet();
-        GameRoom newRoom = new GameRoom(roomId, roomName, host, this);
+        GameRoom newRoom = new GameRoom(roomId, roomName, host, this, gameMode);
         gameRooms.put(roomId, newRoom);
 
         removeClientFromLobby(host);
         newRoom.addPlayer(host);
 
-        System.out.println("방 생성됨: " + roomName + " (ID: " + roomId + ") by " + host.getUsername());
+        System.out.println(gameMode.name() + " 방 생성됨: " + roomName + " (ID: " + roomId + ") by " + host.getUsername());
         return newRoom;
     }
 
@@ -189,8 +196,8 @@ public class BlokusServer {
                     roomListStr.append(":");
                     hasData = true;
                 }
-                roomListStr.append(String.format("[%d,%s,%d/4];",
-                        room.getRoomId(), room.getRoomName(), room.getPlayerCount()));
+                roomListStr.append(String.format("[%d,%s,%d/4,%s];",
+                        room.getRoomId(), room.getRoomName(), room.getPlayerCount(), room.getGameMode().name()));
             }
         }
         if (hasData) {
@@ -243,7 +250,10 @@ public class BlokusServer {
         if (client.getCurrentRoom() != null) {
             GameRoom room = client.getCurrentRoom();
             room.handleDisconnectOrResign(client, "disconnect");
-            leaveRoom(room, client);
+
+            if (room.getGameMode() != GameRoom.GameMode.PEERLESS) {
+                leaveRoom(room, client);
+            }
         }
         removeClientFromLobby(client);
         System.out.println(client.getUsername() + " 접속 종료.");
