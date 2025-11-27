@@ -29,7 +29,8 @@ public class GameRoom implements Serializable {
 
     private int currentPlayerTurnIndex = 0;
     private int currentTurnColor;
-    private int passCount = 0;
+
+    // passCount 제거됨
 
     private static final int CLASSIC_INITIAL_TIME_SECONDS = 300;
     private static final int CLASSIC_TIME_BONUS_SECONDS = 20;
@@ -113,7 +114,7 @@ public class GameRoom implements Serializable {
         gameStarted = true;
         playerCountOnStart = players.size();
         board = new int[20][20];
-        passCount = 0;
+        // passCount 초기화 제거
 
         for (int i = 1; i <= 4; i++) {
             remainingTime.put(i, CLASSIC_INITIAL_TIME_SECONDS);
@@ -137,7 +138,6 @@ public class GameRoom implements Serializable {
             for (int c : colors) myColorsStr.append(c).append(",");
             if (myColorsStr.length() > 0) myColorsStr.deleteCharAt(myColorsStr.length() - 1);
 
-            // 프로토콜 확장: S2C_GAME_START:playerCount:myColors:allPlayerNames
             String msgBase = (gameMode == GameMode.CLASSIC) ? Protocol.S2C_GAME_START : Protocol.S2C_GAME_START_PEERLESS;
             p.sendMessage(msgBase + ":" + playerCountOnStart + ":" + myColorsStr + ":" + allPlayerNames.toString());
 
@@ -306,7 +306,8 @@ public class GameRoom implements Serializable {
         }
 
         String[] parts = data.split(":");
-        if (parts.length < 4) {
+        // Expected format: ID:x:y:rotation:flipped
+        if (parts.length < 5) {
             player.sendMessage(Protocol.S2C_INVALID_MOVE + ":잘못된 요청입니다.");
             return;
         }
@@ -315,6 +316,7 @@ public class GameRoom implements Serializable {
         int x = Integer.parseInt(parts[1]);
         int y = Integer.parseInt(parts[2]);
         int rotation = Integer.parseInt(parts[3]);
+        int flipped = Integer.parseInt(parts[4]);
 
         BlokusPiece pieceToPlace = null;
         List<BlokusPiece> hand = playerHands.get(player);
@@ -329,6 +331,7 @@ public class GameRoom implements Serializable {
             return;
         }
 
+        if (flipped == 1) pieceToPlace.flip();
         for (int i = 0; i < rotation; i++) pieceToPlace.rotate();
 
         if (!isValidMove(pieceToPlace, x, y, currentTurnColor)) {
@@ -349,13 +352,14 @@ public class GameRoom implements Serializable {
         hand.remove(originalPiece);
         sendHandUpdate(player);
 
-        passCount = 0;
+        // passCount = 0; // Removed
         advanceTurn();
     }
 
     private synchronized void handlePeerlessPlaceBlock(ClientHandler player, String data) {
         String[] parts = data.split(":");
-        if (parts.length < 5) {
+        // Expected format: ID:x:y:rotation:flipped:color
+        if (parts.length < 6) {
             player.sendMessage(Protocol.S2C_PEERLESS_PLACE_FAIL + ":잘못된 요청입니다.");
             return;
         }
@@ -364,7 +368,8 @@ public class GameRoom implements Serializable {
         int x = Integer.parseInt(parts[1]);
         int y = Integer.parseInt(parts[2]);
         int rotation = Integer.parseInt(parts[3]);
-        int colorToPlace = Integer.parseInt(parts[4]);
+        int flipped = Integer.parseInt(parts[4]);
+        int colorToPlace = Integer.parseInt(parts[5]);
 
         if (peerlessGamePhase == PeerlessPhase.PREP) {
             if (!isFirstMoveForColor.get(colorToPlace)) {
@@ -411,6 +416,7 @@ public class GameRoom implements Serializable {
             return;
         }
 
+        if (flipped == 1) pieceToPlace.flip();
         for (int i = 0; i < rotation; i++) pieceToPlace.rotate();
 
         if (!isValidMove(pieceToPlace, x, y, colorToPlace)) {
@@ -453,29 +459,7 @@ public class GameRoom implements Serializable {
         return null;
     }
 
-
-    public synchronized void handlePassTurn(ClientHandler player) {
-        if (gameMode == GameMode.PEERLESS) {
-            player.sendMessage(Protocol.S2C_SYSTEM_MSG + ":피어리스 모드에서는 턴을 넘길 수 없습니다.");
-            return;
-        }
-
-        if (player != null) {
-            ClientHandler turnPlayer = getPlayerByColor(currentTurnColor);
-
-            if (turnPlayer == null || !turnPlayer.equals(player)) {
-                player.sendMessage(Protocol.S2C_INVALID_MOVE + ":당신의 턴이 아닙니다.");
-                return;
-            }
-        }
-
-        passCount++;
-        if (checkGameOver()) {
-            handleGameOver(false);
-        } else {
-            advanceTurn();
-        }
-    }
+    // handlePassTurn 삭제됨
 
     public synchronized void handleResignColor(ClientHandler player, String data) {
         if (gameMode == GameMode.PEERLESS) return;
@@ -500,7 +484,12 @@ public class GameRoom implements Serializable {
                 broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색의 점수가 확정되었습니다.");
             }
 
-            handlePassTurn(null);
+            // handlePassTurn(null) 대신 advanceTurn 호출
+            if (checkGameOver()) {
+                handleGameOver(false);
+            } else {
+                advanceTurn();
+            }
 
         } catch (NumberFormatException e) {
             System.err.println("Invalid C2S_RESIGN_COLOR data: " + data);
@@ -543,7 +532,12 @@ public class GameRoom implements Serializable {
             ClientHandler currentTurnPlayer = getPlayerByColor(currentTurnColor);
             if (player.equals(currentTurnPlayer)) {
                 broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 턴을 포기했습니다. 턴이 넘어갑니다.");
-                handlePassTurn(null);
+                // handlePassTurn(null) 대신 advanceTurn 또는 GameOver 체크
+                if (checkGameOver()) {
+                    handleGameOver(false);
+                } else {
+                    advanceTurn();
+                }
             }
         } else {
             if (checkGameOver()) {
@@ -634,8 +628,13 @@ public class GameRoom implements Serializable {
         } while (isTimedOut.get(currentTurnColor));
 
         if (!hasPiecesRemaining(currentTurnColor)) {
-            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님이 블록을 모두 소진하여 턴이 자동으로 넘어갑니다.");
-            handlePassTurn(null);
+            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님이 블록을 모두 소진하여 점수가 확정됩니다.");
+            isTimedOut.put(currentTurnColor, true); // Mark as done
+            if (checkGameOver()) {
+                handleGameOver(false);
+            } else {
+                advanceTurn();
+            }
             return;
         }
 
@@ -668,7 +667,12 @@ public class GameRoom implements Serializable {
                         isTimedOut.put(currentTurnColor, true);
                         broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 점수가 확정되고 턴이 강제로 넘어갑니다.");
                         broadcastTimeUpdate();
-                        handlePassTurn(null);
+
+                        if (checkGameOver()) {
+                            handleGameOver(false);
+                        } else {
+                            advanceTurn();
+                        }
                         this.cancel();
                     } else {
                         broadcastTimeUpdate();
@@ -710,11 +714,7 @@ public class GameRoom implements Serializable {
 
         if (activeColors == 0) return true;
 
-        if (gameMode == GameMode.CLASSIC) {
-            // 기존 로직: 인원 수에 따라 passCount 비교
-            // 수정된 로직: 실제 살아있는 색상 수(activeColors)와 연속 패스 횟수 비교
-            if (passCount >= activeColors) return true;
-        }
+        // passCount 관련 로직 제거됨: 게임 종료는 모든 플레이어가 Resign/Timeout일 때만 발생
 
         return false;
     }

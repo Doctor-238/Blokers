@@ -99,6 +99,20 @@ public class BlokusPiece implements Serializable {
         this.shape = newShape;
     }
 
+    public void flip() {
+        if (shape == null) return;
+        int rows = shape.length;
+        int cols = shape[0].length;
+        int[][] newShape = new int[rows][cols];
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                newShape[r][cols - 1 - c] = shape[r][c];
+            }
+        }
+        this.shape = newShape;
+    }
+
     public String getId() { return id; }
     public int[][] getShape() { return shape; }
     public int getColor() { return color; }

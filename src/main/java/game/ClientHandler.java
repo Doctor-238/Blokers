@@ -96,9 +96,7 @@ public class ClientHandler extends Thread {
                 case Protocol.C2S_PLACE_BLOCK:
                     handlePlaceBlock(message.substring(Protocol.C2S_PLACE_BLOCK.length() + 1));
                     break;
-                case Protocol.C2S_PASS_TURN:
-                    handlePassTurn();
-                    break;
+                // PASS_TURN removed
 
                 case Protocol.C2S_RESIGN_COLOR:
                     if (currentRoom != null) {
@@ -220,13 +218,7 @@ public class ClientHandler extends Thread {
         currentRoom.handlePlaceBlock(this, data);
     }
 
-    private void handlePassTurn() {
-        if (currentRoom == null || !currentRoom.isGameStarted()) {
-            sendMessage(Protocol.S2C_INVALID_MOVE + ":게임 중이 아닙니다.");
-            return;
-        }
-        currentRoom.handlePassTurn(this);
-    }
+    // handlePassTurn Removed
 
     private void handleChat(String message) {
         if (currentRoom != null) {
