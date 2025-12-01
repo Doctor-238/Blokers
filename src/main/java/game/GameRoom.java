@@ -628,7 +628,7 @@ public class GameRoom implements Serializable {
         } while (isTimedOut.get(currentTurnColor));
 
         if (!hasPiecesRemaining(currentTurnColor)) {
-            broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님이 블록을 모두 소진하여 점수가 확정됩니다.");
+            // broadcastMessage 제거: 블록 소진 시 시스템 메시지 안 보냄 (UI상 X 표시 방지)
             isTimedOut.put(currentTurnColor, true); // Mark as done
             if (checkGameOver()) {
                 handleGameOver(false);
@@ -664,15 +664,13 @@ public class GameRoom implements Serializable {
                     remainingTime.put(currentTurnColor, time);
 
                     if (time <= 0) {
-                        isTimedOut.put(currentTurnColor, true);
-                        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 점수가 확정되고 턴이 강제로 넘어갑니다.");
+                        // 시간 초과 시 탈락 처리(isTimedOut=true) 제거
+                        // 단순히 턴만 넘어감
+                        broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 넘어갑니다.");
                         broadcastTimeUpdate();
 
-                        if (checkGameOver()) {
-                            handleGameOver(false);
-                        } else {
-                            advanceTurn();
-                        }
+                        // 시간 초과는 게임 종료 사유가 아니므로 checkGameOver() 호출 없이 바로 advanceTurn()
+                        advanceTurn();
                         this.cancel();
                     } else {
                         broadcastTimeUpdate();
