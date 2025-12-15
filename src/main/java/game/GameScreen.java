@@ -5,7 +5,6 @@ import javax.swing.border.Border;
 import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
@@ -17,38 +16,54 @@ import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
 
+/**
+ * 실제 게임 화면(보드 + 인벤토리 + 상태/타이머 + 채팅)을 담당하는 패널
+ */
 public class GameScreen extends JPanel {
     private BlokusClient client;
 
+    // ===== 버튼 배경 이미지 =====
+    private Image buttonBgImage;
+
+    // ===== 보드 설정 =====
     private static final int BOARD_SIZE = 20;
     private static final int CELL_SIZE = 25;
     private static final int BOARD_PANEL_SIZE = BOARD_SIZE * CELL_SIZE;
 
     private final Color DARK_YELLOW = new Color(204, 153, 0);
 
+    // ===== 게임 상태 데이터 =====
     private int[][] board = new int[BOARD_SIZE][BOARD_SIZE];
+
+    // 내 손패 + 손패 프리뷰 캐시(같은 id/color 프리뷰를 재사용)
     private List<BlokusPiece> myHand = new ArrayList<>();
     private Map<String, PiecePreviewPanel> handPanelCache = new HashMap<>();
 
+    // 현재 선택된 조각(실제 배치용) + 선택된 프리뷰 패널
     private BlokusPiece selectedPiece = null;
     private PiecePreviewPanel selectedPanel = null;
     private int currentRotation = 0;
     private boolean currentFlipped = false;
 
+    // 내가 가진 색(1~4 또는 2색), 현재 인벤토리 보여줄 색, 현재 턴 색
     private int[] myColors = new int[0];
     private int inventoryDisplayColor = 0;
     private int currentTurnColor = 0;
 
+    // 내가 아직 플레이 가능한 색(점수 확정 안 한 색), 점수 확정된(리타이어) 색
     private Set<Integer> myActiveColors = new HashSet<>();
     private Set<Integer> resignedColors = new HashSet<>();
 
+    // 마우스 위치(그리드), 고스트(valid 여부), 관전자 여부
     private Point mouseGridPos = new Point(-1, -1);
     private boolean isGhostValid = false;
     private boolean amISpectating = false;
 
+    // 피어리스 모드 여부 + 게임 종료 여부
     private boolean isPeerlessMode = false;
     private boolean isGameFinished = false;
 
+    // ===== UI 컴포넌트 =====
     private JPanel boardPanel;
     private JPanel handPanel;
     private JScrollPane handScrollPane;
@@ -57,6 +72,7 @@ public class GameScreen extends JPanel {
     private JLabel centerLabel;
     private String[] playerNames = new String[0];
 
+    // 버튼들
     private JButton toggleColorButton;
     private JButton deselectButton;
     private JButton rotateButton;
@@ -65,11 +81,14 @@ public class GameScreen extends JPanel {
 
     private JLabel scoreLabel;
 
+    // 각 색 남은 시간(초) - classic에서 서버가 주는 타이머 표시용
     private int[] remainingTimes = {300, 300, 300, 300};
 
+    // 전체 게임 타이머(로컬 표시용)
     private Timer totalGameTimer;
     private int totalSecondsElapsed = 0;
 
+    // ===== 채팅 패널 =====
     private JLayeredPane chatPanel;
     private JPanel chatContentPanel;
     private JButton chatFoldButton;
@@ -82,6 +101,7 @@ public class GameScreen extends JPanel {
     private JTextPane systemArea;
     private JTextField chatField;
 
+    // 시스템 탭 스타일
     private Style styleDefault;
     private Style styleRed;
     private Style styleBlue;
@@ -89,13 +109,19 @@ public class GameScreen extends JPanel {
     private Style styleGreen;
     private Style styleWhisper;
 
+    // 채팅 탭 스타일
     private Style styleChatDefault;
     private Style styleChatWhisper;
 
+    /**
+     * 배경 클릭 시 선택 해제 처리
+     */
     private MouseAdapter backgroundClickListener = new MouseAdapter() {
         @Override
         public void mouseClicked(MouseEvent e) {
-            if (e.getSource() == GameScreen.this || e.getSource() == boardPanel.getParent() || e.getSource() == handScrollPane.getParent()) {
+            if (e.getSource() == GameScreen.this
+                    || e.getSource() == boardPanel.getParent()
+                    || e.getSource() == handScrollPane.getParent()) {
                 deselectPiece();
             }
         }
@@ -104,6 +130,16 @@ public class GameScreen extends JPanel {
     public GameScreen(BlokusClient client) {
         this.client = client;
 
+        // [이미지 로드]
+        try {
+            java.net.URL imgUrl = getClass().getResource("/Images/Button.jpg");
+            if (imgUrl != null) {
+                buttonBgImage = new ImageIcon(imgUrl).getImage();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         this.enableInputMethods(false);
 
         setLayout(new BorderLayout(10, 10));
@@ -111,6 +147,7 @@ public class GameScreen extends JPanel {
 
         addMouseListener(backgroundClickListener);
 
+        // ===== 상단 패널 =====
         JPanel topPanel = new JPanel(new BorderLayout(10, 0));
         topPanel.setPreferredSize(new Dimension(0, 60));
         topPanel.addMouseListener(backgroundClickListener);
@@ -128,13 +165,14 @@ public class GameScreen extends JPanel {
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 15));
         controlPanel.addMouseListener(backgroundClickListener);
 
-        rotateButton = new JButton("회전 (r)");
+        // 커스텀 버튼 적용
+        rotateButton = createStyledButton("회전 (r)");
         rotateButton.addActionListener(e -> rotateSelectedPiece());
 
-        flipButton = new JButton("뒤집기 (f)");
+        flipButton = createStyledButton("뒤집기 (f)");
         flipButton.addActionListener(e -> flipSelectedPiece());
 
-        resignButton = new JButton("점수 확정 (Esc)");
+        resignButton = createStyledButton("점수 확정 (Esc)");
         resignButton.addActionListener(e -> handleResign());
 
         controlPanel.add(rotateButton);
@@ -144,6 +182,7 @@ public class GameScreen extends JPanel {
 
         add(topPanel, BorderLayout.NORTH);
 
+        // ===== 보드 패널 =====
         boardPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -159,20 +198,20 @@ public class GameScreen extends JPanel {
         addMouseListeners();
         add(boardPanel, BorderLayout.CENTER);
 
+        // ===== 하단 패널 =====
         JPanel southPanel = new JPanel(new BorderLayout(5, 5));
         southPanel.addMouseListener(backgroundClickListener);
 
         JPanel southTopPanel = new JPanel(new BorderLayout(10, 5));
-
         JPanel southWestButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         southWestButtons.setOpaque(false);
 
-        toggleColorButton = new JButton("블록 전환 (e)");
+        toggleColorButton = createStyledButton("블록 전환 (e)");
         toggleColorButton.setVisible(false);
         toggleColorButton.addActionListener(e -> toggleInventoryColor());
         southWestButtons.add(toggleColorButton);
 
-        deselectButton = new JButton("선택 취소 (q)");
+        deselectButton = createStyledButton("선택 취소 (q)");
         deselectButton.addActionListener(e -> deselectPiece());
         southWestButtons.add(deselectButton);
 
@@ -197,6 +236,7 @@ public class GameScreen extends JPanel {
         southPanel.add(handScrollPane, BorderLayout.CENTER);
         add(southPanel, BorderLayout.SOUTH);
 
+        // ===== 채팅 패널 =====
         setupChatPanel();
 
         rotateButton.setFocusable(false);
@@ -208,6 +248,29 @@ public class GameScreen extends JPanel {
         setupKeyBindings();
     }
 
+    /**
+     * 배경 이미지가 적용된 버튼 생성 헬퍼
+     */
+    private JButton createStyledButton(String text) {
+        JButton btn = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                if (buttonBgImage != null) {
+                    g.drawImage(buttonBgImage, 0, 0, getWidth(), getHeight(), this);
+                } else {
+                    g.setColor(Color.DARK_GRAY);
+                    g.fillRect(0, 0, getWidth(), getHeight());
+                }
+                super.paintComponent(g);
+            }
+        };
+        btn.setContentAreaFilled(false);
+        btn.setFocusPainted(false);
+        btn.setForeground(Color.WHITE);
+        btn.setFont(new Font("맑은 고딕", Font.BOLD, 12));
+        return btn;
+    }
+
     private void setupChatPanel() {
         chatPanel = new JLayeredPane();
         chatPanel.setPreferredSize(new Dimension(CHAT_EXPANDED_WIDTH, 0));
@@ -215,9 +278,11 @@ public class GameScreen extends JPanel {
         chatContentPanel = new JPanel(new BorderLayout());
         chatTabs = new JTabbedPane();
 
+        // 채팅 탭
         chatAreaPane = new JTextPane();
         chatAreaPane.setEditable(false);
         StyledDocument chatDoc = chatAreaPane.getStyledDocument();
+
         styleChatDefault = chatAreaPane.addStyle("ChatDefault", null);
         StyleConstants.setForeground(styleChatDefault, Color.BLACK);
         StyleConstants.setFontFamily(styleChatDefault, "맑은 고딕");
@@ -229,10 +294,11 @@ public class GameScreen extends JPanel {
 
         chatTabs.addTab("채팅", new JScrollPane(chatAreaPane));
 
+        // 시스템 탭
         systemArea = new JTextPane();
         systemArea.setEditable(false);
-
         StyledDocument doc = systemArea.getStyledDocument();
+
         styleDefault = systemArea.addStyle("Default", null);
         StyleConstants.setForeground(styleDefault, Color.DARK_GRAY);
         StyleConstants.setFontFamily(styleDefault, "맑은 고딕");
@@ -259,19 +325,22 @@ public class GameScreen extends JPanel {
         StyleConstants.setItalic(styleWhisper, true);
 
         chatTabs.addTab("시스템", new JScrollPane(systemArea));
-
         chatContentPanel.add(chatTabs, BorderLayout.CENTER);
 
+        // 입력창
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
         chatField.addActionListener(e -> sendChat());
-        JButton sendButton = new JButton("전송");
+
+        JButton sendButton = createStyledButton("전송");
         sendButton.addActionListener(e -> sendChat());
+
         chatInputPanel.add(chatField, BorderLayout.CENTER);
         chatInputPanel.add(sendButton, BorderLayout.EAST);
         chatContentPanel.add(chatInputPanel, BorderLayout.SOUTH);
 
-        chatFoldButton = new JButton("◀");
+        // 접기 버튼
+        chatFoldButton = createStyledButton("◀");
         chatFoldButton.setFont(new Font("Dialog", Font.BOLD, 10));
         chatFoldButton.setMargin(new Insets(0, 0, 0, 0));
         chatFoldButton.setFocusable(false);
@@ -307,6 +376,7 @@ public class GameScreen extends JPanel {
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
+
             Graphics2D g2d = (Graphics2D) g;
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
@@ -325,6 +395,7 @@ public class GameScreen extends JPanel {
 
             for (int i = 0; i < playerNames.length; i++) {
                 String name = playerNames[i];
+
                 int[] colorsForPlayer;
                 if (isTwoPlayer) {
                     if (i == 0) colorsForPlayer = new int[]{1, 3};
@@ -362,8 +433,8 @@ public class GameScreen extends JPanel {
                     g2d.drawRect(blockX, drawY, blockWidth, blockHeight);
 
                     String timeStr = formatTime(remainingTimes[colorCode - 1]);
-
                     g2d.setFont(new Font("맑은 고딕", Font.BOLD, 11));
+
                     if (!isTurn || isResigned) {
                         g2d.setColor(Color.DARK_GRAY);
                     } else {
@@ -406,26 +477,18 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('r'), "rotateAction");
         im.put(KeyStroke.getKeyStroke('R'), "rotateAction");
         im.put(KeyStroke.getKeyStroke('ㄱ'), "rotateAction");
-
         am.put("rotateAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (!chatField.isFocusOwner()) {
-                    rotateSelectedPiece();
-                }
+            @Override public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) rotateSelectedPiece();
             }
         });
 
         im.put(KeyStroke.getKeyStroke('f'), "flipAction");
         im.put(KeyStroke.getKeyStroke('F'), "flipAction");
         im.put(KeyStroke.getKeyStroke('ㄹ'), "flipAction");
-
         am.put("flipAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (!chatField.isFocusOwner()) {
-                    flipSelectedPiece();
-                }
+            @Override public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) flipSelectedPiece();
             }
         });
 
@@ -433,11 +496,8 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('E'), "toggleAction");
         im.put(KeyStroke.getKeyStroke('ㄷ'), "toggleAction");
         am.put("toggleAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (!chatField.isFocusOwner()) {
-                    toggleInventoryColor();
-                }
+            @Override public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) toggleInventoryColor();
             }
         });
 
@@ -445,11 +505,8 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('Q'), "deselectAction");
         im.put(KeyStroke.getKeyStroke('ㅂ'), "deselectAction");
         am.put("deselectAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (!chatField.isFocusOwner()) {
-                    deselectPiece();
-                }
+            @Override public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) deselectPiece();
             }
         });
 
@@ -457,8 +514,7 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('C'), "memoAction");
         im.put(KeyStroke.getKeyStroke('ㅊ'), "memoAction");
         am.put("memoAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
+            @Override public void actionPerformed(ActionEvent e) {
                 if (!chatField.isFocusOwner() && selectedPanel != null) {
                     selectedPanel.toggleMemo();
                 }
@@ -467,21 +523,15 @@ public class GameScreen extends JPanel {
 
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "placeAction");
         am.put("placeAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (!chatField.isFocusOwner()) {
-                    attemptPlaceBlock();
-                }
+            @Override public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) attemptPlaceBlock();
             }
         });
 
         im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "resignAction");
         am.put("resignAction", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (!chatField.isFocusOwner()) {
-                    handleResign();
-                }
+            @Override public void actionPerformed(ActionEvent e) {
+                if (!chatField.isFocusOwner()) handleResign();
             }
         });
 
@@ -501,30 +551,10 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('D'), "navigateRight");
         im.put(KeyStroke.getKeyStroke('ㅇ'), "navigateRight");
 
-        am.put("navigateUp", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                handleNavigate("up");
-            }
-        });
-        am.put("navigateLeft", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                handleNavigate("left");
-            }
-        });
-        am.put("navigateDown", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                handleNavigate("down");
-            }
-        });
-        am.put("navigateRight", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                handleNavigate("right");
-            }
-        });
+        am.put("navigateUp", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("up"); }});
+        am.put("navigateLeft", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("left"); }});
+        am.put("navigateDown", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("down"); }});
+        am.put("navigateRight", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("right"); }});
     }
 
     public void initializeGame(String data) {
@@ -636,7 +666,6 @@ public class GameScreen extends JPanel {
         if (totalGameTimer != null) totalGameTimer.cancel();
     }
 
-
     private void setSpectateMode(boolean spectating) {
         this.amISpectating = spectating;
 
@@ -648,7 +677,6 @@ public class GameScreen extends JPanel {
         handPanel.repaint();
     }
 
-
     private void handleResign() {
         if (amISpectating) {
             client.sendMessage(Protocol.C2S_LEAVE_ROOM);
@@ -656,7 +684,9 @@ public class GameScreen extends JPanel {
         }
 
         int result = JOptionPane.showConfirmDialog(this,
-                "정말 점수를 확정하시겠습니까?\n이 색상으로는 더 이상 블록을 놓을 수 없습니다.", "점수 확정 확인", JOptionPane.YES_NO_OPTION);
+                "정말 점수를 확정하시겠습니까?\n이 색상으로는 더 이상 블록을 놓을 수 없습니다.",
+                "점수 확정 확인",
+                JOptionPane.YES_NO_OPTION);
 
         if (result == JOptionPane.YES_OPTION) {
             if (isPeerlessMode) {
@@ -677,6 +707,7 @@ public class GameScreen extends JPanel {
     public void updateGameState(String data) {
         if (isPeerlessMode) return;
         if (data == null) return;
+
         String[] parts = data.split(":");
         if (parts.length < 3) return;
 
@@ -693,7 +724,6 @@ public class GameScreen extends JPanel {
         }
 
         this.currentTurnColor = newTurnColor;
-
         statusPanel.repaint();
 
         boolean myTurn = false;
@@ -718,7 +748,6 @@ public class GameScreen extends JPanel {
         }
 
         boardPanel.repaint();
-
         updateButtonStates();
     }
 
@@ -748,9 +777,11 @@ public class GameScreen extends JPanel {
 
     private void calculateAndUpdateScore() {
         int totalScore = 0;
+
         if (myColors.length == 2) {
             int scoreColor1 = 0;
             int scoreColor2 = 0;
+
             for (BlokusPiece piece : myHand) {
                 if (piece.getColor() == myColors[0]) {
                     scoreColor1 += piece.getSize();
@@ -758,7 +789,9 @@ public class GameScreen extends JPanel {
                     scoreColor2 += piece.getSize();
                 }
             }
+
             totalScore = scoreColor1 + scoreColor2;
+
             String color1Name = getColorNameForPlayer(myColors[0]);
             String color2Name = getColorNameForPlayer(myColors[1]);
             scoreLabel.setText(String.format("남은 점수: %d (%s %d, %s %d)",
@@ -803,6 +836,7 @@ public class GameScreen extends JPanel {
     public void updateTimer(String data) {
         if (isPeerlessMode) return;
         if (data == null) return;
+
         String[] times = data.split(",");
         if (times.length == 4) {
             for (int i = 0; i < 4; i++) {
@@ -812,13 +846,12 @@ public class GameScreen extends JPanel {
         }
     }
 
-    private void updateTimerVisibility() {
-    }
-
     public String formatTime(int seconds) {
         if (seconds < 0) seconds = 0;
         return String.format("%02d:%02d", seconds / 60, seconds % 60);
     }
+
+    // ===== 인벤토리 UI 갱신 =====
 
     private void updateHandPanelUI() {
         handPanel.removeAll();
@@ -850,7 +883,8 @@ public class GameScreen extends JPanel {
         if (selectedPiece != null) {
             boolean pieceStillInHand = false;
             for (BlokusPiece piece : myHand) {
-                if (piece.getId().equals(selectedPiece.getId()) && piece.getColor() == selectedPiece.getColor()) {
+                if (piece.getId().equals(selectedPiece.getId())
+                        && piece.getColor() == selectedPiece.getColor()) {
                     pieceStillInHand = true;
                     break;
                 }
@@ -924,6 +958,7 @@ public class GameScreen extends JPanel {
         if (selectedPiece == null || mouseGridPos.x == -1) {
             return;
         }
+
         Graphics2D g2d = (Graphics2D) g;
         List<Point> points = selectedPiece.getPoints();
 
@@ -1032,13 +1067,11 @@ public class GameScreen extends JPanel {
         });
     }
 
-    // Helper method to synchronize selectedPiece with server logic (Flip -> Rotate)
     private void updateSelectedPieceShape() {
         if (selectedPanel == null) return;
 
         selectedPiece = new BlokusPiece(selectedPanel.originalId, selectedPanel.originalColor);
 
-        // 중요: 서버와 동일한 순서로 적용 (Flip -> Rotate)
         if (currentFlipped) {
             selectedPiece.flip();
         }
@@ -1050,16 +1083,15 @@ public class GameScreen extends JPanel {
     private void rotateSelectedPiece() {
         if (selectedPiece != null && selectedPanel != null) {
             currentRotation = (currentRotation + 1) % 4;
-            selectedPanel.rotatePreview(); // 패널 미리보기 상태 업데이트
+            selectedPanel.rotatePreview();
 
-            updateSelectedPieceShape(); // 조각 모양 재계산 (Flip -> Rotate 순서 보장)
+            updateSelectedPieceShape();
 
             isGhostValid = checkLocalPlacement(selectedPiece, mouseGridPos.x, mouseGridPos.y);
             boardPanel.repaint();
         }
     }
 
-    // [New Helper Method] - 도형이 같은지 비교
     private boolean isShapeEqual(int[][] s1, int[][] s2) {
         if (s1.length != s2.length || s1[0].length != s2[0].length) return false;
         for (int i = 0; i < s1.length; i++) {
@@ -1070,36 +1102,28 @@ public class GameScreen extends JPanel {
         return true;
     }
 
-    // [Modified Method] - 뒤집기 로직 개선 (좌우 대칭이면 상하 반전)
     private void flipSelectedPiece() {
         if (selectedPiece != null && selectedPanel != null) {
-            // 1. 현재 상태의 모양 계산
             BlokusPiece currentShapePiece = new BlokusPiece(selectedPanel.originalId, selectedPanel.originalColor);
             if (currentFlipped) currentShapePiece.flip();
             for (int i = 0; i < currentRotation; i++) currentShapePiece.rotate();
 
-            // 2. 단순히 좌우 반전(Flip 토글)했을 때의 모양 계산
             boolean nextFlipped = !currentFlipped;
             BlokusPiece flippedShapePiece = new BlokusPiece(selectedPanel.originalId, selectedPanel.originalColor);
             if (nextFlipped) flippedShapePiece.flip();
             for (int i = 0; i < currentRotation; i++) flippedShapePiece.rotate();
 
-            // 3. 두 모양 비교
             if (isShapeEqual(currentShapePiece.getShape(), flippedShapePiece.getShape())) {
-                // 좌우 대칭임 -> 상하 반전 효과를 위해 180도 회전
                 currentRotation = (currentRotation + 2) % 4;
-                // currentFlipped는 유지
             } else {
-                // 좌우 비대칭임 -> 일반적인 좌우 반전
                 currentFlipped = nextFlipped;
             }
 
-            // 4. 패널 및 상태 업데이트
             selectedPanel.previewFlipped = currentFlipped;
             selectedPanel.previewRotation = currentRotation;
-            selectedPanel.repaint(); // 패널 다시 그리기
+            selectedPanel.repaint();
 
-            updateSelectedPieceShape(); // 조각 모양 재계산 (Flip -> Rotate 순서 보장)
+            updateSelectedPieceShape();
 
             isGhostValid = checkLocalPlacement(selectedPiece, mouseGridPos.x, mouseGridPos.y);
             boardPanel.repaint();
@@ -1200,6 +1224,7 @@ public class GameScreen extends JPanel {
 
             } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
                 StyledDocument doc = systemArea.getStyledDocument();
+
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
                     doc.insertString(doc.getLength(), parts[0] + "→ ", styleDefault);
@@ -1277,7 +1302,7 @@ public class GameScreen extends JPanel {
                     currentRotation = targetPanel.previewRotation;
                     currentFlipped = targetPanel.previewFlipped;
 
-                    updateSelectedPieceShape(); // 생성 시에도 통일된 로직 사용
+                    updateSelectedPieceShape();
 
                     isGhostValid = checkLocalPlacement(selectedPiece, mouseGridPos.x, mouseGridPos.y);
                     boardPanel.repaint();
@@ -1296,7 +1321,7 @@ public class GameScreen extends JPanel {
             }
         }
 
-        for(List<Component> row : rows.values()) {
+        for (List<Component> row : rows.values()) {
             row.sort(Comparator.comparingInt(Component::getX));
         }
 
@@ -1324,14 +1349,10 @@ public class GameScreen extends JPanel {
 
         switch (direction) {
             case "left":
-                if (currentInRowIndex > 0) {
-                    targetComponent = currentRow.get(currentInRowIndex - 1);
-                }
+                if (currentInRowIndex > 0) targetComponent = currentRow.get(currentInRowIndex - 1);
                 break;
             case "right":
-                if (currentInRowIndex < currentRow.size() - 1) {
-                    targetComponent = currentRow.get(currentInRowIndex + 1);
-                }
+                if (currentInRowIndex < currentRow.size() - 1) targetComponent = currentRow.get(currentInRowIndex + 1);
                 break;
             case "up":
                 if (currentRowIndex > 0) {
@@ -1347,7 +1368,7 @@ public class GameScreen extends JPanel {
                 break;
         }
 
-        if (targetComponent != null && targetComponent instanceof PiecePreviewPanel) {
+        if (targetComponent instanceof PiecePreviewPanel) {
             PiecePreviewPanel targetPanel = (PiecePreviewPanel) targetComponent;
 
             if (selectedPanel != null) {
@@ -1360,7 +1381,7 @@ public class GameScreen extends JPanel {
             currentRotation = targetPanel.previewRotation;
             currentFlipped = targetPanel.previewFlipped;
 
-            updateSelectedPieceShape(); // 생성 시에도 통일된 로직 사용
+            updateSelectedPieceShape();
 
             isGhostValid = checkLocalPlacement(selectedPiece, mouseGridPos.x, mouseGridPos.y);
             boardPanel.repaint();
@@ -1419,33 +1440,10 @@ public class GameScreen extends JPanel {
         boardPanel.repaint();
     }
 
-
-    private class ColorIndicatorPanel extends JPanel {
-        private Color color;
-
-        public ColorIndicatorPanel(Color color) {
-            this.color = color;
-            setPreferredSize(new Dimension(20, 20));
-        }
-
-        public void setColor(Color color) {
-            this.color = color;
-            repaint();
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            super.paintComponent(g);
-            g.setColor(color);
-            g.fillRect(0, 0, getWidth(), getHeight());
-            g.setColor(Color.BLACK);
-            g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
-        }
-    }
-
     private class PiecePreviewPanel extends JPanel {
         public final String originalId;
         public final int originalColor;
+
         public int previewRotation = 0;
         public boolean previewFlipped = false;
 
@@ -1463,7 +1461,6 @@ public class GameScreen extends JPanel {
             this.originalColor = piece.getColor();
 
             setPreferredSize(new Dimension(PREVIEW_PANEL_SIZE, PREVIEW_PANEL_SIZE));
-
             setBackground(Color.WHITE);
             setBorder(defaultBorder);
 
@@ -1489,7 +1486,7 @@ public class GameScreen extends JPanel {
                         currentRotation = previewRotation;
                         currentFlipped = previewFlipped;
 
-                        updateSelectedPieceShape(); // 생성 시에도 통일된 로직 사용
+                        updateSelectedPieceShape();
                     }
                 }
             });
@@ -1497,7 +1494,7 @@ public class GameScreen extends JPanel {
 
         private BlokusPiece getPreviewPiece() {
             BlokusPiece piece = new BlokusPiece(originalId, originalColor);
-            if(previewFlipped) piece.flip();
+            if (previewFlipped) piece.flip();
             for (int i = 0; i < previewRotation; i++) {
                 piece.rotate();
             }
@@ -1535,6 +1532,7 @@ public class GameScreen extends JPanel {
 
             Color pieceColor = getColorForPlayer(pieceToDraw.getColor());
             g.setColor(pieceColor);
+
             List<Point> points = pieceToDraw.getPoints();
 
             int pieceWidth = pieceToDraw.getWidth() * PREVIEW_CELL_SIZE;
@@ -1543,10 +1541,10 @@ public class GameScreen extends JPanel {
             int offsetX = (PREVIEW_PANEL_SIZE - pieceWidth) / 2;
             int offsetY = (PREVIEW_PANEL_SIZE - pieceHeight) / 2;
 
-
             for (Point p : points) {
                 int x = offsetX + p.x * PREVIEW_CELL_SIZE;
                 int y = offsetY + p.y * PREVIEW_CELL_SIZE;
+
                 g.fillRect(x, y, PREVIEW_CELL_SIZE, PREVIEW_CELL_SIZE);
 
                 g.setColor(Color.BLACK);

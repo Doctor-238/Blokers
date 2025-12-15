@@ -11,16 +11,15 @@ import java.awt.event.MouseEvent;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileDescriptor;
-import java.io.FileNotFoundException;
+import java.io.FileInputStream;          // [CHANGED] UTF-8 고정 읽기용
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStreamReader;        // [CHANGED] UTF-8 고정 읽기용
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.net.Socket;
-
-import java.util.concurrent.atomic.AtomicReference;
+import java.nio.charset.StandardCharsets; // [CHANGED] UTF-8 고정
 
 public class BlokusClient extends JFrame {
 
@@ -40,7 +39,9 @@ public class BlokusClient extends JFrame {
 
     private boolean handlingLoginFail = false;
 
-    private static final String CONFIG_FILE = "src/main/resources/server.txt";
+    // [KEEP] 경로 하드코딩 유지 (요청사항 반영)
+    private static final String CONFIG_FILE =
+            "C:\\Users\\atlas\\Desktop\\Git\\NetworkProgramming\\Blokers\\src\\main\\resources\\server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -93,7 +94,10 @@ public class BlokusClient extends JFrame {
             return null;
         }
 
-        try (BufferedReader br = new BufferedReader(new FileReader(configFile))) {
+        // [CHANGED] FileReader -> UTF-8 고정(InputStreamReader)
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8)
+        )) {
             String host = br.readLine();
             String portStr = br.readLine();
 
@@ -105,9 +109,6 @@ public class BlokusClient extends JFrame {
             int port = Integer.parseInt(portStr.trim());
             return new String[]{host.trim(), String.valueOf(port)};
 
-        } catch (FileNotFoundException e) {
-            JOptionPane.showMessageDialog(this, CONFIG_FILE + " 파일을 찾을 수 없습니다.", "설정 오류", JOptionPane.ERROR_MESSAGE);
-            return null;
         } catch (IOException e) {
             JOptionPane.showMessageDialog(this, CONFIG_FILE + " 읽기 오류: " + e.getMessage(), "설정 오류", JOptionPane.ERROR_MESSAGE);
             return null;
@@ -138,7 +139,7 @@ public class BlokusClient extends JFrame {
 
         SwingWorker<String, Void> loginWorker = new SwingWorker<>() {
             @Override
-            protected String doInBackground() throws Exception {
+            protected String doInBackground() {
                 try {
                     connect(host, port);
                     sendMessage(Protocol.C2S_LOGIN + ":" + username);
@@ -210,6 +211,7 @@ public class BlokusClient extends JFrame {
                         cardLayout.show(mainPanel, "LOBBY");
                         loginScreen.setLoginControlsEnabled(true, " ");
                         break;
+
                     case Protocol.S2C_LOGIN_FAIL:
                         handlingLoginFail = true;
                         JOptionPane.showMessageDialog(BlokusClient.this, "로그인 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
@@ -223,42 +225,52 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_ROOM_LIST:
                         lobbyScreen.updateRoomList(data);
                         break;
+
                     case Protocol.S2C_JOIN_SUCCESS:
                         roomScreen.setRoomName(data.split(":")[1]);
                         roomScreen.clearChat();
                         cardLayout.show(mainPanel, "ROOM");
                         break;
+
                     case Protocol.S2C_JOIN_FAIL:
                         JOptionPane.showMessageDialog(BlokusClient.this, "방 참여 실패: " + data, "오류", JOptionPane.ERROR_MESSAGE);
                         break;
+
                     case Protocol.S2C_ROOM_UPDATE:
                         roomScreen.updatePlayerList(data, username);
                         break;
+
                     case Protocol.S2C_KICKED:
                         JOptionPane.showMessageDialog(BlokusClient.this, "방에서 강퇴당했습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
                         cardLayout.show(mainPanel, "LOBBY");
                         sendMessage(Protocol.C2S_GET_LEADERBOARD);
                         break;
+
                     case Protocol.S2C_GAME_START:
                         gameScreen.initializeGame(data);
                         gameScreen.clearChat();
                         cardLayout.show(mainPanel, "GAME");
                         break;
+
                     case Protocol.S2C_GAME_START_PEERLESS:
                         gameScreen.initializePeerlessGame(data);
                         gameScreen.clearChat();
                         cardLayout.show(mainPanel, "GAME");
                         break;
+
                     case Protocol.S2C_GAME_STATE:
                         gameScreen.updateGameState(data);
                         break;
+
                     case Protocol.S2C_HAND_UPDATE:
                         gameScreen.updatePlayerHand(data);
                         gameScreen.deselectPiece();
                         break;
+
                     case Protocol.S2C_TIME_UPDATE:
                         gameScreen.updateTimer(data);
                         break;
+
                     case Protocol.S2C_INVALID_MOVE:
                         JOptionPane.showMessageDialog(BlokusClient.this, "잘못된 이동: " + data, "알림", JOptionPane.WARNING_MESSAGE);
                         break;
@@ -266,6 +278,7 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_PEERLESS_PREP_START:
                         gameScreen.setPeerlessTimer("준비 시간: 20초 (첫 블록을 배치하세요)", Color.CYAN);
                         break;
+
                     case Protocol.S2C_PEERLESS_PREP_TIMER_UPDATE:
                         String[] prepData = data.split(":");
                         String time = prepData[0];
@@ -276,19 +289,24 @@ public class BlokusClient extends JFrame {
                             gameScreen.setPeerlessTimer("게임 시작 " + time + "초 전!", Color.ORANGE);
                         }
                         break;
+
                     case Protocol.S2C_PEERLESS_MAIN_START:
                         gameScreen.setPeerlessTimer("게임 시작!", Color.GREEN);
                         break;
+
                     case Protocol.S2C_PEERLESS_TIMER_UPDATE:
                         gameScreen.setPeerlessTimer("남은 시간: " + gameScreen.formatTime(Integer.parseInt(data)), Color.WHITE);
                         break;
+
                     case Protocol.S2C_PEERLESS_PLACE_SUCCESS:
                         String[] pieceData = data.split(":");
                         gameScreen.removePieceFromHand(pieceData[0], Integer.parseInt(pieceData[1]));
                         break;
+
                     case Protocol.S2C_PEERLESS_PLACE_FAIL:
                         JOptionPane.showMessageDialog(BlokusClient.this, "배치 실패: " + data, "알림", JOptionPane.WARNING_MESSAGE);
                         break;
+
                     case Protocol.S2C_PEERLESS_BOARD_UPDATE:
                         gameScreen.updateBoardState(data);
                         break;
@@ -299,14 +317,17 @@ public class BlokusClient extends JFrame {
                         cardLayout.show(mainPanel, "LOBBY");
                         sendMessage(Protocol.C2S_GET_LEADERBOARD);
                         break;
+
                     case Protocol.S2C_CHAT:
                         roomScreen.appendChatMessage(data);
                         gameScreen.appendChatMessage(data);
                         break;
+
                     case Protocol.S2C_WHISPER:
                         roomScreen.appendChatMessage(data, true);
                         gameScreen.appendChatMessage(data, true);
                         break;
+
                     case Protocol.S2C_SYSTEM_MSG:
                         if (data != null && data.contains("로비로")) {
                             cardLayout.show(mainPanel, "LOBBY");
@@ -383,8 +404,22 @@ class LoginScreen extends JPanel {
     final JButton loginButton;
     final JLabel statusLabel;
 
+    private final Image backgroundImage;
+
     public LoginScreen(BlokusClient client) {
         this.client = client;
+
+        // 배경 이미지를 먼저 로드 (resources 기준)
+        Image img = null;
+        java.net.URL url = getClass().getResource("/Images/Login.jpg");
+        if (url != null) {
+            img = new ImageIcon(url).getImage();
+        } else {
+            System.err.println("Login.jpg 리소스를 찾을 수 없습니다: /Images/Login.jpg");
+        }
+        backgroundImage = img;
+
+        setOpaque(false);
 
         setLayout(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
@@ -392,16 +427,35 @@ class LoginScreen extends JPanel {
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
         gbc.gridx = 0; gbc.gridy = 0;
-        add(new JLabel("이름:"), gbc);
+        JLabel nameLabel = new JLabel("이름:");
+        nameLabel.setFont(new Font("맑은 고딕", Font.BOLD, 32));
+        add(nameLabel, gbc);
 
         gbc.gridx = 1; gbc.gridy = 0;
         usernameField = new JTextField(15);
+        usernameField.setFont(new Font("맑은 고딕", Font.PLAIN, 18));
+
+        Dimension d = usernameField.getPreferredSize();
+        usernameField.setPreferredSize(new Dimension(d.width, (int)(d.height * 1.5)));
         add(usernameField, gbc);
 
         gbc.gridx = 0; gbc.gridy = 1;
         gbc.gridwidth = 2;
-        loginButton = new JButton("접속");
+
+        Image btnBg = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+        loginButton = new JButton("Start") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.drawImage(btnBg, 0, 0, getWidth(), getHeight(), this);
+                super.paintComponent(g);
+            }
+        };
+        loginButton.setContentAreaFilled(false);
+        loginButton.setForeground(Color.WHITE);
+        Font f = loginButton.getFont();
+        loginButton.setFont(f.deriveFont(Font.BOLD, 30f));
         add(loginButton, gbc);
+
 
         gbc.gridx = 0; gbc.gridy = 2;
         gbc.gridwidth = 2;
@@ -425,6 +479,36 @@ class LoginScreen extends JPanel {
             }
         });
     }
+
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        if (backgroundImage == null) return;
+
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+
+        int pw = getWidth();
+        int ph = getHeight();
+
+        int iw = backgroundImage.getWidth(this);
+        int ih = backgroundImage.getHeight(this);
+        if (iw <= 0 || ih <= 0) { g2.dispose(); return; }
+
+        // ✅ contain: 비율 유지 + 전체 보이기(안 잘림)
+        double scale = Math.min((double) pw / iw, (double) ph / ih);
+
+        int w = (int) Math.round(iw * scale);
+        int h = (int) Math.round(ih * scale);
+
+        int x = (pw - w) / 2;
+        int y = (ph - h) / 2;
+
+        g2.drawImage(backgroundImage, x, y, w, h, this);
+        g2.dispose();
+    }
+
 
     public String getUsername() {
         return usernameField.getText();
@@ -456,6 +540,7 @@ class LobbyScreen extends JPanel {
         setLayout(cardLayout);
 
         JPanel leaderboardPanel = new JPanel(new BorderLayout());
+        leaderboardPanel.setBackground(Color.WHITE);
 
         String[] columnNames = {"순위", "이름", "점수"};
         leaderboardModel = new DefaultTableModel(columnNames, 0) {
@@ -464,6 +549,7 @@ class LobbyScreen extends JPanel {
                 return false;
             }
         };
+
         leaderboardTable = new JTable(leaderboardModel);
         leaderboardTable.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
         leaderboardTable.setRowHeight(25);
@@ -472,35 +558,91 @@ class LobbyScreen extends JPanel {
         leaderboardTable.getColumnModel().getColumn(1).setPreferredWidth(200);
         leaderboardTable.getColumnModel().getColumn(2).setPreferredWidth(100);
 
-        leaderboardPanel.add(new JScrollPane(leaderboardTable), BorderLayout.CENTER);
+        leaderboardTable.setBackground(Color.WHITE);
+        leaderboardTable.setFillsViewportHeight(true);
+
+        JScrollPane leaderboardScroll = new JScrollPane(leaderboardTable);
+        leaderboardScroll.setBorder(BorderFactory.createEmptyBorder());
+        leaderboardScroll.getViewport().setOpaque(true);
+        leaderboardScroll.getViewport().setBackground(Color.WHITE);
+        leaderboardScroll.setOpaque(true);
+        leaderboardScroll.setBackground(Color.WHITE);
+        leaderboardScroll.setCorner(JScrollPane.UPPER_RIGHT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+        leaderboardScroll.setCorner(JScrollPane.LOWER_RIGHT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+        leaderboardScroll.setCorner(JScrollPane.UPPER_LEFT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+        leaderboardScroll.setCorner(JScrollPane.LOWER_LEFT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+
+        leaderboardPanel.add(leaderboardScroll, BorderLayout.CENTER);
 
         JPanel leaderboardBottomPanel = new JPanel();
+        leaderboardBottomPanel.setBackground(Color.WHITE);
 
-        JButton showRoomsButton = new JButton("방 목록 / 생성");
+        JButton showRoomsButton = new JButton("방 목록/생성");
+        showRoomsButton.setForeground(Color.WHITE);
+        showRoomsButton.setFont(showRoomsButton.getFont().deriveFont(Font.BOLD, 16f));
+        showRoomsButton.setFocusPainted(false);
+        showRoomsButton.setContentAreaFilled(false);
+        showRoomsButton.setBorderPainted(false);
+        showRoomsButton.setOpaque(false);
         showRoomsButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 showRoomList();
             }
         });
+        showRoomsButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
 
         JButton refreshLeaderboardButton = new JButton("점수 갱신");
+        refreshLeaderboardButton.setForeground(Color.WHITE);
+        refreshLeaderboardButton.setFont(refreshLeaderboardButton.getFont().deriveFont(Font.BOLD, 16f));
+        refreshLeaderboardButton.setFocusPainted(false);
+        refreshLeaderboardButton.setContentAreaFilled(false);
+        refreshLeaderboardButton.setBorderPainted(false);
+        refreshLeaderboardButton.setOpaque(false);
         refreshLeaderboardButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 client.sendMessage(Protocol.C2S_GET_LEADERBOARD);
             }
         });
+        refreshLeaderboardButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
+
+        Dimension pref1 = showRoomsButton.getPreferredSize();
+        showRoomsButton.setPreferredSize(new Dimension(pref1.width + 30, pref1.height + 10));
+
+        Dimension pref2 = refreshLeaderboardButton.getPreferredSize();
+        refreshLeaderboardButton.setPreferredSize(new Dimension(pref2.width + 30, pref2.height + 10));
 
         leaderboardBottomPanel.add(showRoomsButton);
         leaderboardBottomPanel.add(refreshLeaderboardButton);
         leaderboardPanel.add(leaderboardBottomPanel, BorderLayout.SOUTH);
 
         JPanel roomListPanel = new JPanel(new BorderLayout());
+        roomListPanel.setBackground(Color.WHITE);
 
         roomListModel = new DefaultListModel<>();
         roomList = new JList<>(roomListModel);
-        roomList.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
+        roomList.setFont(new Font("맑은 고딕", Font.BOLD, 20));
+        roomList.setFixedCellHeight(36);
+        roomList.setBackground(Color.WHITE);
 
         roomList.addMouseListener(new MouseAdapter() {
             public void mouseClicked(MouseEvent evt) {
@@ -510,41 +652,126 @@ class LobbyScreen extends JPanel {
             }
         });
 
-        roomListPanel.add(new JScrollPane(roomList), BorderLayout.CENTER);
+        JScrollPane roomScroll = new JScrollPane(roomList);
+        roomScroll.setBorder(BorderFactory.createEmptyBorder());
+        roomScroll.getViewport().setOpaque(true);
+        roomScroll.getViewport().setBackground(Color.WHITE);
+        roomScroll.setOpaque(true);
+        roomScroll.setBackground(Color.WHITE);
+        roomScroll.setCorner(JScrollPane.UPPER_RIGHT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+        roomScroll.setCorner(JScrollPane.LOWER_RIGHT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+        roomScroll.setCorner(JScrollPane.UPPER_LEFT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+        roomScroll.setCorner(JScrollPane.LOWER_LEFT_CORNER, new JPanel() {{ setBackground(Color.WHITE); }});
+
+        roomListPanel.add(roomScroll, BorderLayout.CENTER);
 
         JPanel roomListBottomPanel = new JPanel();
+        roomListBottomPanel.setBackground(Color.WHITE);
 
         JButton createButtonInRoomList = new JButton("방 만들기");
+        createButtonInRoomList.setForeground(Color.WHITE);
+        createButtonInRoomList.setFont(createButtonInRoomList.getFont().deriveFont(Font.BOLD, 16f));
+        createButtonInRoomList.setFocusPainted(false);
+        createButtonInRoomList.setContentAreaFilled(false);
+        createButtonInRoomList.setBorderPainted(false);
+        createButtonInRoomList.setOpaque(false);
         createButtonInRoomList.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 createRoom();
             }
         });
+        createButtonInRoomList.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
 
         JButton joinButton = new JButton("선택한 방 접속");
+        joinButton.setForeground(Color.WHITE);
+        joinButton.setFont(joinButton.getFont().deriveFont(Font.BOLD, 16f));
+        joinButton.setFocusPainted(false);
+        joinButton.setContentAreaFilled(false);
+        joinButton.setBorderPainted(false);
+        joinButton.setOpaque(false);
         joinButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 joinSelectedRoom();
             }
         });
-
-        JButton backButton = new JButton("로비로 돌아가기");
-        backButton.addActionListener(new ActionListener() {
+        joinButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
             @Override
-            public void actionPerformed(ActionEvent e) {
-                cardLayout.show(LobbyScreen.this, LEADERBOARD_PANEL);
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
             }
         });
 
         JButton refreshRoomsButton = new JButton("방 새로고침");
+        refreshRoomsButton.setForeground(Color.WHITE);
+        refreshRoomsButton.setFont(refreshRoomsButton.getFont().deriveFont(Font.BOLD, 16f));
+        refreshRoomsButton.setFocusPainted(false);
+        refreshRoomsButton.setContentAreaFilled(false);
+        refreshRoomsButton.setBorderPainted(false);
+        refreshRoomsButton.setOpaque(false);
         refreshRoomsButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 client.sendMessage(Protocol.C2S_GET_ROOM_LIST);
             }
         });
+        refreshRoomsButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
+
+        JButton backButton = new JButton("로비로 돌아가기");
+        backButton.setForeground(Color.WHITE);
+        backButton.setFont(backButton.getFont().deriveFont(Font.BOLD, 16f));
+        backButton.setFocusPainted(false);
+        backButton.setContentAreaFilled(false);
+        backButton.setBorderPainted(false);
+        backButton.setOpaque(false);
+        backButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                cardLayout.show(LobbyScreen.this, LEADERBOARD_PANEL);
+            }
+        });
+        backButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
+
+        Dimension p3 = createButtonInRoomList.getPreferredSize();
+        createButtonInRoomList.setPreferredSize(new Dimension(p3.width + 30, p3.height + 10));
+        Dimension p4 = joinButton.getPreferredSize();
+        joinButton.setPreferredSize(new Dimension(p4.width + 30, p4.height + 10));
+        Dimension p5 = refreshRoomsButton.getPreferredSize();
+        refreshRoomsButton.setPreferredSize(new Dimension(p5.width + 30, p5.height + 10));
+        Dimension p6 = backButton.getPreferredSize();
+        backButton.setPreferredSize(new Dimension(p6.width + 30, p6.height + 10));
 
         roomListBottomPanel.add(createButtonInRoomList);
         roomListBottomPanel.add(joinButton);
@@ -672,16 +899,25 @@ class RoomScreen extends JPanel {
     public RoomScreen(BlokusClient client) {
         this.client = client;
         setLayout(new BorderLayout());
+        setBackground(Color.WHITE);
+        setOpaque(true);
 
         roomNameLabel = new JLabel("방 이름: ", JLabel.CENTER);
+        roomNameLabel.setFont(new Font("맑은 고딕", Font.BOLD, 24));
+        roomNameLabel.setPreferredSize(new Dimension(0, 50));
+        roomNameLabel.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
         add(roomNameLabel, BorderLayout.NORTH);
 
         playerListModel = new DefaultListModel<>();
         playerList = new JList<>(playerListModel);
+        playerList.setFont(new Font("맑은 고딕", Font.BOLD, 20));
+        playerList.setFixedCellHeight(32);
         add(new JScrollPane(playerList), BorderLayout.CENTER);
 
         JPanel chatPanel = new JPanel(new BorderLayout());
         chatTabs = new JTabbedPane();
+        chatTabs.setOpaque(true);
+        chatTabs.setBackground(Color.WHITE);
 
         // JTextArea -> JTextPane
         chatAreaPane = new JTextPane();
@@ -696,8 +932,7 @@ class RoomScreen extends JPanel {
         StyleConstants.setForeground(styleChatWhisper_Room, Color.MAGENTA);
         StyleConstants.setItalic(styleChatWhisper_Room, true);
 
-        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane)); // Add new pane
-
+        chatTabs.addTab("채팅", new JScrollPane(chatAreaPane));
 
         systemArea = new JTextPane();
         systemArea.setEditable(false);
@@ -732,7 +967,6 @@ class RoomScreen extends JPanel {
 
         chatPanel.add(chatTabs, BorderLayout.CENTER);
 
-
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
         chatField.addActionListener(new ActionListener() {
@@ -741,13 +975,35 @@ class RoomScreen extends JPanel {
                 sendChat();
             }
         });
+
+        // =========================
+        // 전송 버튼(Button.jpg 적용 + 글자 흰색)
+        // =========================
         JButton sendButton = new JButton("전송");
+        sendButton.setForeground(Color.WHITE);
+        sendButton.setFont(sendButton.getFont().deriveFont(Font.BOLD, 14f));
+        sendButton.setFocusPainted(false);
+        sendButton.setContentAreaFilled(false);
+        sendButton.setBorderPainted(false);
+        sendButton.setOpaque(false);
+        sendButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
         sendButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 sendChat();
             }
         });
+        // =========================
+
         chatInputPanel.add(chatField, BorderLayout.CENTER);
         chatInputPanel.add(sendButton, BorderLayout.EAST);
         chatPanel.add(chatInputPanel, BorderLayout.SOUTH);
@@ -756,7 +1012,29 @@ class RoomScreen extends JPanel {
         add(chatPanel, BorderLayout.WEST);
 
         JPanel bottomPanel = new JPanel();
+        bottomPanel.setBackground(Color.WHITE);
+        bottomPanel.setOpaque(true);
+
+        // =========================
+        // 게임 시작 버튼(Button.jpg 적용 + 글자 흰색)
+        // =========================
         startButton = new JButton("게임 시작");
+        startButton.setForeground(Color.WHITE);
+        startButton.setFont(startButton.getFont().deriveFont(Font.BOLD, 16f));
+        startButton.setFocusPainted(false);
+        startButton.setContentAreaFilled(false);
+        startButton.setBorderPainted(false);
+        startButton.setOpaque(false);
+        startButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
         startButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -764,8 +1042,28 @@ class RoomScreen extends JPanel {
             }
         });
         bottomPanel.add(startButton);
+        // =========================
 
+        // =========================
+        // 강퇴하기 버튼(Button.jpg 적용 + 글자 흰색)
+        // =========================
         kickButton = new JButton("강퇴하기");
+        kickButton.setForeground(Color.WHITE);
+        kickButton.setFont(kickButton.getFont().deriveFont(Font.BOLD, 16f));
+        kickButton.setFocusPainted(false);
+        kickButton.setContentAreaFilled(false);
+        kickButton.setBorderPainted(false);
+        kickButton.setOpaque(false);
+        kickButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
         kickButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -777,8 +1075,28 @@ class RoomScreen extends JPanel {
             }
         });
         bottomPanel.add(kickButton);
+        // =========================
 
+        // =========================
+        // 방 나가기 버튼(Button.jpg 적용 + 글자 흰색)
+        // =========================
         JButton leaveButton = new JButton("방 나가기");
+        leaveButton.setForeground(Color.WHITE);
+        leaveButton.setFont(leaveButton.getFont().deriveFont(Font.BOLD, 16f));
+        leaveButton.setFocusPainted(false);
+        leaveButton.setContentAreaFilled(false);
+        leaveButton.setBorderPainted(false);
+        leaveButton.setOpaque(false);
+        leaveButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                int w = c.getWidth();
+                int h = c.getHeight();
+                Image img = new ImageIcon(getClass().getResource("/Images/Button.jpg")).getImage();
+                if (img != null) g.drawImage(img, 0, 0, w, h, c);
+                super.paint(g, c);
+            }
+        });
         leaveButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -786,6 +1104,7 @@ class RoomScreen extends JPanel {
             }
         });
         bottomPanel.add(leaveButton);
+        // =========================
 
         add(bottomPanel, BorderLayout.SOUTH);
     }

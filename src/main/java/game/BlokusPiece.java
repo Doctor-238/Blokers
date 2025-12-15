@@ -9,6 +9,7 @@ import java.util.Map;
 
 public class BlokusPiece implements Serializable {
 
+    // [유지] 조각 ID 목록 (게임룸/클라이언트에서 공통 사용)
     public static final String[] ALL_PIECE_IDS = {
             "I1", "I2", "I3", "I4", "I5",
             "L3", "L4", "L5",
@@ -18,6 +19,7 @@ public class BlokusPiece implements Serializable {
             "F5", "N", "P", "U", "V5", "W", "X", "Y"
     };
 
+    // [유지] 원본 모양 데이터 (1=블록, 0=빈칸)
     private static final Map<String, int[][]> SHAPE_DATA = new HashMap<>();
     static {
         SHAPE_DATA.put("I1", new int[][]{{1}});
@@ -39,20 +41,25 @@ public class BlokusPiece implements Serializable {
         SHAPE_DATA.put("Z5", new int[][]{{1, 1, 0}, {0, 1, 0}, {0, 1, 1}});
 
         SHAPE_DATA.put("F5", new int[][]{{0, 1, 1}, {1, 1, 0}, {0, 1, 0}});
-        SHAPE_DATA.put("N", new int[][]{{1, 1, 0, 0}, {0, 1, 1, 1}});
-        SHAPE_DATA.put("P", new int[][]{{1, 1}, {1, 1}, {1, 0}});
-        SHAPE_DATA.put("U", new int[][]{{1, 0, 1}, {1, 1, 1}});
+        SHAPE_DATA.put("N",  new int[][]{{1, 1, 0, 0}, {0, 1, 1, 1}});
+        SHAPE_DATA.put("P",  new int[][]{{1, 1}, {1, 1}, {1, 0}});
+        SHAPE_DATA.put("U",  new int[][]{{1, 0, 1}, {1, 1, 1}});
         SHAPE_DATA.put("V5", new int[][]{{1, 0, 0}, {1, 0, 0}, {1, 1, 1}});
-        SHAPE_DATA.put("W", new int[][]{{1, 0, 0}, {1, 1, 0}, {0, 1, 1}});
-        SHAPE_DATA.put("X", new int[][]{{0, 1, 0}, {1, 1, 1}, {0, 1, 0}});
-        SHAPE_DATA.put("Y", new int[][]{{1, 1, 1, 1}, {0, 1, 0, 0}});
+        SHAPE_DATA.put("W",  new int[][]{{1, 0, 0}, {1, 1, 0}, {0, 1, 1}});
+        SHAPE_DATA.put("X",  new int[][]{{0, 1, 0}, {1, 1, 1}, {0, 1, 0}});
+        SHAPE_DATA.put("Y",  new int[][]{{1, 1, 1, 1}, {0, 1, 0, 0}});
     }
 
     private String id;
-    private int[][] shape;
-    private int color;
-    private int size;
+    private int[][] shape; // 회전/반전된 현재 모양
+    private int color;     // 1~4
+    private int size;      // 블록 칸 개수(점수 계산용)
 
+    /**
+     * [생성자] ID/Color로 조각 생성
+     * - SHAPE_DATA에서 원본 모양을 deep copy
+     * - size(블록 개수) 계산
+     */
     public BlokusPiece(String id, int color) {
         this.id = id;
         this.color = color;
@@ -63,11 +70,12 @@ public class BlokusPiece implements Serializable {
         }
 
         this.shape = new int[originalShape.length][originalShape[0].length];
+
         int calculatedSize = 0;
-        for (int i = 0; i < originalShape.length; i++) {
-            for (int j = 0; j < originalShape[i].length; j++) {
-                this.shape[i][j] = originalShape[i][j];
-                if (originalShape[i][j] == 1) {
+        for (int r = 0; r < originalShape.length; r++) {
+            for (int c = 0; c < originalShape[r].length; c++) {
+                this.shape[r][c] = originalShape[r][c];
+                if (originalShape[r][c] == 1) {
                     calculatedSize++;
                 }
             }
@@ -75,18 +83,28 @@ public class BlokusPiece implements Serializable {
         this.size = calculatedSize;
     }
 
+    /**
+     * [복사 생성자] 회전/반전 등으로 변경되는 객체를 안전하게 복제하기 위해 사용
+     * - GameRoom에서 hand의 원본을 보존하고, 배치 검증용으로 복사본을 만들 때 유용
+     */
     public BlokusPiece(BlokusPiece other) {
         this.id = other.id;
         this.color = other.color;
         this.size = other.size;
+
         this.shape = new int[other.shape.length][other.shape[0].length];
-        for (int i = 0; i < other.shape.length; i++) {
-            System.arraycopy(other.shape[i], 0, this.shape[i], 0, other.shape[i].length);
+        for (int r = 0; r < other.shape.length; r++) {
+            System.arraycopy(other.shape[r], 0, this.shape[r], 0, other.shape[r].length);
         }
     }
 
+    /**
+     * [회전] 시계 방향 90도
+     * - (rows x cols) -> (cols x rows)
+     */
     public void rotate() {
         if (shape == null) return;
+
         int rows = shape.length;
         int cols = shape[0].length;
         int[][] newShape = new int[cols][rows];
@@ -99,8 +117,12 @@ public class BlokusPiece implements Serializable {
         this.shape = newShape;
     }
 
+    /**
+     * [반전] 좌우 반전(가로 미러링)
+     */
     public void flip() {
         if (shape == null) return;
+
         int rows = shape.length;
         int cols = shape[0].length;
         int[][] newShape = new int[rows][cols];
@@ -113,13 +135,21 @@ public class BlokusPiece implements Serializable {
         this.shape = newShape;
     }
 
+    // ===== Getter =====
+
     public String getId() { return id; }
     public int[][] getShape() { return shape; }
     public int getColor() { return color; }
     public int getSize() { return size; }
-    public int getWidth() { return shape[0].length; }
+
+    public int getWidth()  { return shape[0].length; }
     public int getHeight() { return shape.length; }
 
+    /**
+     * 현재 shape에서 블록(=1)인 좌표만 Point 리스트로 반환
+     * - 좌표계: (c, r) = (x, y)
+     * - GameRoom에서 보드 배치 검증/적용할 때 사용
+     */
     public List<Point> getPoints() {
         List<Point> points = new ArrayList<>();
         for (int r = 0; r < shape.length; r++) {

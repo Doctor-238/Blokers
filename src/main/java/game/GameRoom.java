@@ -4,7 +4,6 @@ import java.awt.*;
 import java.io.Serializable;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class GameRoom implements Serializable {
     public enum GameMode { CLASSIC, PEERLESS }
@@ -13,24 +12,27 @@ public class GameRoom implements Serializable {
     private int roomId;
     private String roomName;
     private ClientHandler host;
-    private BlokusServer server;
+
+    // [CHANGED] Serializable에서 서버 참조가 직렬화 대상이면 문제 소지 → transient 처리(현재 문자열 프로토콜이므로 영향 없음)
+    private transient BlokusServer server;
+
     private GameMode gameMode;
 
-    private List<ClientHandler> players = Collections.synchronizedList(new ArrayList<>());
+    // [CHANGED] Collections.synchronizedList(new ArrayList<>()) → Vector 로 교체 (서버 코드와 동일 계열)
+    private final Vector<ClientHandler> players = new Vector<>();
 
     private boolean gameStarted = false;
     private int[][] board = new int[20][20];
 
-    private Map<ClientHandler, List<BlokusPiece>> playerHands = Collections.synchronizedMap(new HashMap<>());
-    private Map<ClientHandler, int[]> playerColors = Collections.synchronizedMap(new HashMap<>());
-    private Map<Integer, Boolean> isFirstMoveForColor = Collections.synchronizedMap(new HashMap<>());
+    // [CHANGED] Collections.synchronizedMap(...) 제거 → HashMap + (this) synchronized로 보호
+    private final Map<ClientHandler, List<BlokusPiece>> playerHands = new HashMap<>();
+    private final Map<ClientHandler, int[]> playerColors = new HashMap<>();
+    private final Map<Integer, Boolean> isFirstMoveForColor = new HashMap<>();
 
     private int playerCountOnStart = 0;
 
     private int currentPlayerTurnIndex = 0;
     private int currentTurnColor;
-
-    // passCount 제거됨
 
     private static final int CLASSIC_INITIAL_TIME_SECONDS = 300;
     private static final int CLASSIC_TIME_BONUS_SECONDS = 20;
@@ -40,13 +42,17 @@ public class GameRoom implements Serializable {
 
     private transient Timer gameTimer;
     private transient TimerTask currentTimerTask;
-    private Map<Integer, Integer> remainingTime = Collections.synchronizedMap(new HashMap<>());
-    private Map<Integer, Boolean> isTimedOut = Collections.synchronizedMap(new HashMap<>());
+
+    // [CHANGED] synchronizedMap 제거 → HashMap + (this) synchronized로 보호
+    private final Map<Integer, Integer> remainingTime = new HashMap<>();
+    private final Map<Integer, Boolean> isTimedOut = new HashMap<>();
 
     private transient Timer peerlessTimer;
-    private transient AtomicInteger peerlessSecondsRemaining = new AtomicInteger(0);
-    private transient PeerlessPhase peerlessGamePhase = PeerlessPhase.NONE;
 
+    // [CHANGED] AtomicInteger 제거 → int + synchronized(GameRoom.this) 안에서만 증감
+    private transient int peerlessSecondsRemaining = 0;
+
+    private transient PeerlessPhase peerlessGamePhase = PeerlessPhase.NONE;
 
     public GameRoom(int roomId, String roomName, ClientHandler host, BlokusServer server, GameMode gameMode) {
         this.roomId = roomId;
@@ -56,6 +62,7 @@ public class GameRoom implements Serializable {
         this.gameMode = gameMode;
     }
 
+    // [CHANGED] players는 Vector지만, 여러 단계 체크/순회가 있으니 synchronized 유지
     public boolean isPlayerInRoom(String username) {
         synchronized (players) {
             for (ClientHandler player : players) {
@@ -114,8 +121,10 @@ public class GameRoom implements Serializable {
         gameStarted = true;
         playerCountOnStart = players.size();
         board = new int[20][20];
-        // passCount 초기화 제거
 
+        // [CHANGED] synchronizedMap 제거했으므로 startGame에서 초기값 확실히 세팅
+        remainingTime.clear();
+        isTimedOut.clear();
         for (int i = 1; i <= 4; i++) {
             remainingTime.put(i, CLASSIC_INITIAL_TIME_SECONDS);
             isTimedOut.put(i, false);
@@ -123,7 +132,6 @@ public class GameRoom implements Serializable {
 
         initializePlayerHandsAndColors();
 
-        // 플레이어 이름 목록 생성 (순서대로)
         StringBuilder allPlayerNames = new StringBuilder();
         for (ClientHandler p : players) {
             allPlayerNames.append(p.getUsername()).append(",");
@@ -135,12 +143,13 @@ public class GameRoom implements Serializable {
         for (ClientHandler p : players) {
             StringBuilder myColorsStr = new StringBuilder();
             int[] colors = playerColors.get(p);
-            for (int c : colors) myColorsStr.append(c).append(",");
-            if (myColorsStr.length() > 0) myColorsStr.deleteCharAt(myColorsStr.length() - 1);
+            if (colors != null) {
+                for (int c : colors) myColorsStr.append(c).append(",");
+                if (myColorsStr.length() > 0) myColorsStr.deleteCharAt(myColorsStr.length() - 1);
+            }
 
             String msgBase = (gameMode == GameMode.CLASSIC) ? Protocol.S2C_GAME_START : Protocol.S2C_GAME_START_PEERLESS;
             p.sendMessage(msgBase + ":" + playerCountOnStart + ":" + myColorsStr + ":" + allPlayerNames.toString());
-
             sendHandUpdate(p);
         }
 
@@ -155,7 +164,10 @@ public class GameRoom implements Serializable {
 
     private void startPeerlessPrepTimer() {
         peerlessGamePhase = PeerlessPhase.PREP;
-        peerlessSecondsRemaining.set(PEERLESS_PREP_TIME_SECONDS);
+
+        // [CHANGED] AtomicInteger → int
+        peerlessSecondsRemaining = PEERLESS_PREP_TIME_SECONDS;
+
         broadcastMessage(Protocol.S2C_PEERLESS_PREP_START);
 
         if (peerlessTimer != null) peerlessTimer.cancel();
@@ -169,7 +181,10 @@ public class GameRoom implements Serializable {
                         return;
                     }
 
-                    int time = peerlessSecondsRemaining.decrementAndGet();
+                    // [CHANGED] decrementAndGet → --peerlessSecondsRemaining
+                    peerlessSecondsRemaining--;
+                    int time = peerlessSecondsRemaining;
+
                     broadcastMessage(Protocol.S2C_PEERLESS_PREP_TIMER_UPDATE + ":" + time + ":PREP");
 
                     if (time <= 0) {
@@ -184,8 +199,9 @@ public class GameRoom implements Serializable {
 
     private boolean allFirstBlocksPlaced() {
         for (int i = 1; i <= 4; i++) {
-            if (isFirstMoveForColor.get(i)) {
-
+            // [CHANGED] null 방어(기본 true로 취급)
+            boolean first = Boolean.TRUE.equals(isFirstMoveForColor.get(i));
+            if (first) {
                 boolean colorInPlay = false;
                 for (int[] colors : playerColors.values()) {
                     for (int c : colors) {
@@ -194,6 +210,7 @@ public class GameRoom implements Serializable {
                             break;
                         }
                     }
+                    if (colorInPlay) break;
                 }
                 if (colorInPlay) return false;
             }
@@ -203,7 +220,9 @@ public class GameRoom implements Serializable {
 
     private void startPeerlessMainCountdown(int seconds) {
         peerlessGamePhase = PeerlessPhase.COUNTDOWN;
-        peerlessSecondsRemaining.set(seconds);
+
+        // [CHANGED] AtomicInteger → int
+        peerlessSecondsRemaining = seconds;
 
         if (peerlessTimer != null) peerlessTimer.cancel();
         peerlessTimer = new Timer();
@@ -216,9 +235,10 @@ public class GameRoom implements Serializable {
                         return;
                     }
 
-                    int time = peerlessSecondsRemaining.get();
+                    // [CHANGED] get() / decrementAndGet() 패턴 제거
+                    int time = peerlessSecondsRemaining;
                     broadcastMessage(Protocol.S2C_PEERLESS_PREP_TIMER_UPDATE + ":" + time + ":COUNTDOWN");
-                    peerlessSecondsRemaining.decrementAndGet();
+                    peerlessSecondsRemaining--;
 
                     if (time <= 0) {
                         this.cancel();
@@ -233,7 +253,9 @@ public class GameRoom implements Serializable {
 
     private void startPeerlessMainGameTimer() {
         peerlessGamePhase = PeerlessPhase.MAIN;
-        peerlessSecondsRemaining.set(PEERLESS_MAIN_TIME_SECONDS);
+
+        // [CHANGED] AtomicInteger → int
+        peerlessSecondsRemaining = PEERLESS_MAIN_TIME_SECONDS;
 
         if (peerlessTimer != null) peerlessTimer.cancel();
         peerlessTimer = new Timer();
@@ -245,7 +267,11 @@ public class GameRoom implements Serializable {
                         this.cancel();
                         return;
                     }
-                    int time = peerlessSecondsRemaining.decrementAndGet();
+
+                    // [CHANGED] decrementAndGet → --peerlessSecondsRemaining
+                    peerlessSecondsRemaining--;
+                    int time = peerlessSecondsRemaining;
+
                     broadcastMessage(Protocol.S2C_PEERLESS_TIMER_UPDATE + ":" + time);
 
                     if (time <= 0) {
@@ -272,10 +298,12 @@ public class GameRoom implements Serializable {
         }
 
         ClientHandler target = null;
-        for (ClientHandler p : players) {
-            if (p.getUsername().equals(targetUsername)) {
-                target = p;
-                break;
+        synchronized (players) {
+            for (ClientHandler p : players) {
+                if (p.getUsername().equals(targetUsername)) {
+                    target = p;
+                    break;
+                }
             }
         }
 
@@ -306,7 +334,6 @@ public class GameRoom implements Serializable {
         }
 
         String[] parts = data.split(":");
-        // Expected format: ID:x:y:rotation:flipped
         if (parts.length < 5) {
             player.sendMessage(Protocol.S2C_INVALID_MOVE + ":잘못된 요청입니다.");
             return;
@@ -352,13 +379,11 @@ public class GameRoom implements Serializable {
         hand.remove(originalPiece);
         sendHandUpdate(player);
 
-        // passCount = 0; // Removed
         advanceTurn();
     }
 
     private synchronized void handlePeerlessPlaceBlock(ClientHandler player, String data) {
         String[] parts = data.split(":");
-        // Expected format: ID:x:y:rotation:flipped:color
         if (parts.length < 6) {
             player.sendMessage(Protocol.S2C_PEERLESS_PLACE_FAIL + ":잘못된 요청입니다.");
             return;
@@ -372,7 +397,7 @@ public class GameRoom implements Serializable {
         int colorToPlace = Integer.parseInt(parts[5]);
 
         if (peerlessGamePhase == PeerlessPhase.PREP) {
-            if (!isFirstMoveForColor.get(colorToPlace)) {
+            if (!Boolean.TRUE.equals(isFirstMoveForColor.get(colorToPlace))) {
                 player.sendMessage(Protocol.S2C_PEERLESS_PLACE_FAIL + ":준비 시간에는 색상별로 첫 블록 하나만 놓을 수 있습니다.");
                 return;
             }
@@ -398,7 +423,7 @@ public class GameRoom implements Serializable {
             return;
         }
 
-        if (isTimedOut.get(colorToPlace)) {
+        if (Boolean.TRUE.equals(isTimedOut.get(colorToPlace))) {
             player.sendMessage(Protocol.S2C_PEERLESS_PLACE_FAIL + ":이미 점수가 확정된 색상입니다.");
             return;
         }
@@ -425,7 +450,8 @@ public class GameRoom implements Serializable {
         }
 
         placePieceOnBoard(pieceToPlace, x, y);
-        boolean wasFirstMove = isFirstMoveForColor.get(colorToPlace);
+
+        boolean wasFirstMove = Boolean.TRUE.equals(isFirstMoveForColor.get(colorToPlace));
         isFirstMoveForColor.put(colorToPlace, false);
 
         BlokusPiece originalPiece = null;
@@ -447,19 +473,17 @@ public class GameRoom implements Serializable {
         }
     }
 
-
-    private ClientHandler getPlayerByColor(int color) {
+    // [CHANGED] playerColors 접근이므로 synchronized로 보호
+    private synchronized ClientHandler getPlayerByColor(int color) {
         for (ClientHandler player : playerColors.keySet()) {
-            for (int c : playerColors.get(player)) {
-                if (c == color) {
-                    return player;
-                }
+            int[] colors = playerColors.get(player);
+            if (colors == null) continue;
+            for (int c : colors) {
+                if (c == color) return player;
             }
         }
         return null;
     }
-
-    // handlePassTurn 삭제됨
 
     public synchronized void handleResignColor(ClientHandler player, String data) {
         if (gameMode == GameMode.PEERLESS) return;
@@ -479,12 +503,11 @@ public class GameRoom implements Serializable {
                 return;
             }
 
-            if (!isTimedOut.get(colorToResign)) {
+            if (!Boolean.TRUE.equals(isTimedOut.get(colorToResign))) {
                 isTimedOut.put(colorToResign, true);
                 broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(colorToResign) + " 색의 점수가 확정되었습니다.");
             }
 
-            // handlePassTurn(null) 대신 advanceTurn 호출
             if (checkGameOver()) {
                 handleGameOver(false);
             } else {
@@ -503,7 +526,7 @@ public class GameRoom implements Serializable {
         int[] colors = playerColors.get(player);
         if (colors != null) {
             for (int c : colors) {
-                if (!isTimedOut.get(c)) {
+                if (!Boolean.TRUE.equals(isTimedOut.get(c))) {
                     isTimedOut.put(c, true);
                     broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " (" + player.getUsername() + ") 님의 점수가 확정되었습니다.");
                 }
@@ -521,7 +544,7 @@ public class GameRoom implements Serializable {
         int[] colors = playerColors.get(player);
         if (colors != null) {
             for (int c : colors) {
-                if (!isTimedOut.get(c)) {
+                if (!Boolean.TRUE.equals(isTimedOut.get(c))) {
                     isTimedOut.put(c, true);
                     broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(c) + " 색이 연결 종료되어 점수가 확정되었습니다.");
                 }
@@ -532,7 +555,6 @@ public class GameRoom implements Serializable {
             ClientHandler currentTurnPlayer = getPlayerByColor(currentTurnColor);
             if (player.equals(currentTurnPlayer)) {
                 broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + player.getUsername() + "님이 턴을 포기했습니다. 턴이 넘어갑니다.");
-                // handlePassTurn(null) 대신 advanceTurn 또는 GameOver 체크
                 if (checkGameOver()) {
                     handleGameOver(false);
                 } else {
@@ -548,7 +570,7 @@ public class GameRoom implements Serializable {
 
     private boolean isValidMove(BlokusPiece piece, int x, int y, int color) {
         List<Point> pieceCoords = piece.getPoints();
-        boolean isFirstMove = isFirstMoveForColor.get(color);
+        boolean isFirstMove = Boolean.TRUE.equals(isFirstMoveForColor.get(color));
         boolean cornerTouch = false;
 
         Point startCorner = null;
@@ -625,11 +647,10 @@ public class GameRoom implements Serializable {
                 }
                 return;
             }
-        } while (isTimedOut.get(currentTurnColor));
+        } while (Boolean.TRUE.equals(isTimedOut.get(currentTurnColor)));
 
         if (!hasPiecesRemaining(currentTurnColor)) {
-            // broadcastMessage 제거: 블록 소진 시 시스템 메시지 안 보냄 (UI상 X 표시 방지)
-            isTimedOut.put(currentTurnColor, true); // Mark as done
+            isTimedOut.put(currentTurnColor, true);
             if (checkGameOver()) {
                 handleGameOver(false);
             } else {
@@ -638,7 +659,8 @@ public class GameRoom implements Serializable {
             return;
         }
 
-        int newTime = remainingTime.get(currentTurnColor) + CLASSIC_TIME_BONUS_SECONDS;
+        int base = remainingTime.get(currentTurnColor);
+        int newTime = base + CLASSIC_TIME_BONUS_SECONDS;
         remainingTime.put(currentTurnColor, newTime);
 
         startTurnTimer();
@@ -664,12 +686,8 @@ public class GameRoom implements Serializable {
                     remainingTime.put(currentTurnColor, time);
 
                     if (time <= 0) {
-                        // 시간 초과 시 탈락 처리(isTimedOut=true) 제거
-                        // 단순히 턴만 넘어감
                         broadcastMessage(Protocol.S2C_SYSTEM_MSG + ":" + getColorName(currentTurnColor) + " 님의 시간이 초과되어 턴이 넘어갑니다.");
                         broadcastTimeUpdate();
-
-                        // 시간 초과는 게임 종료 사유가 아니므로 checkGameOver() 호출 없이 바로 advanceTurn()
                         advanceTurn();
                         this.cancel();
                     } else {
@@ -704,30 +722,13 @@ public class GameRoom implements Serializable {
                         break;
                     }
                 }
+                if (colorInPlay) break;
             }
-            if (colorInPlay && !isTimedOut.get(i)) {
+            if (colorInPlay && !Boolean.TRUE.equals(isTimedOut.get(i))) {
                 activeColors++;
             }
         }
-
-        if (activeColors == 0) return true;
-
-        // passCount 관련 로직 제거됨: 게임 종료는 모든 플레이어가 Resign/Timeout일 때만 발생
-
-        return false;
-    }
-
-    private boolean isPlayerTimedOut(ClientHandler player) {
-        int[] colors = playerColors.get(player);
-        if (colors == null) return true;
-
-        int timedOutCount = 0;
-        for (int c : colors) {
-            if (isTimedOut.getOrDefault(c, false)) {
-                timedOutCount++;
-            }
-        }
-        return timedOutCount == colors.length;
+        return activeColors == 0;
     }
 
     private void handleGameOver(boolean forced) {
@@ -747,7 +748,6 @@ public class GameRoom implements Serializable {
             Map<ClientHandler, Integer> scores = new HashMap<>();
 
             for (ClientHandler player : playerColors.keySet()) {
-
                 int score = 0;
                 List<BlokusPiece> hand = playerHands.get(player);
 
@@ -760,7 +760,6 @@ public class GameRoom implements Serializable {
                         score += piece.getSize();
                     }
                 }
-
                 scores.put(player, score);
             }
 
@@ -786,7 +785,6 @@ public class GameRoom implements Serializable {
                     scoreChanges.put(p2.getUsername(), 0.0);
                     resultMessage = "DRAW (점수: " + scoreP1 + ")";
                 }
-
             } else {
                 List<Map.Entry<ClientHandler, Integer>> sorted = new ArrayList<>(scores.entrySet());
                 sorted.sort(Comparator.comparingInt(Map.Entry::getValue));
@@ -803,12 +801,7 @@ public class GameRoom implements Serializable {
 
                     scoreChanges.put(p.getUsername(), pointChange);
 
-                    String scoreDisplay;
-                    if (s == 999) {
-                        scoreDisplay = "오류";
-                    } else {
-                        scoreDisplay = s + "점";
-                    }
+                    String scoreDisplay = (s == 999) ? "오류" : (s + "점");
 
                     rankStr.append((i + 1)).append("등: ").append(p.getUsername()).append(" (")
                             .append(scoreDisplay).append(" / ").append(pointChange > 0 ? "+" : "")
@@ -954,16 +947,14 @@ public class GameRoom implements Serializable {
         }
     }
 
-    private boolean hasPiecesRemaining(int color) {
+    private synchronized boolean hasPiecesRemaining(int color) {
         ClientHandler player = getPlayerByColor(color);
         if (player == null) return false;
         List<BlokusPiece> hand = playerHands.get(player);
         if (hand == null) return false;
 
         for (BlokusPiece piece : hand) {
-            if (piece.getColor() == color) {
-                return true;
-            }
+            if (piece.getColor() == color) return true;
         }
         return false;
     }
@@ -972,6 +963,9 @@ public class GameRoom implements Serializable {
     public String getRoomName() { return roomName; }
     public int getPlayerCount() { return players.size(); }
     public boolean isGameStarted() { return gameStarted; }
+
+    // [CHANGED] Vector 반환(타입은 List로 유지해서 외부 코드 영향 최소화)
     public List<ClientHandler> getPlayers() { return players; }
+
     public GameMode getGameMode() { return gameMode; }
 }
