@@ -11,15 +11,15 @@ import java.awt.event.MouseEvent;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileDescriptor;
-import java.io.FileInputStream;          // [CHANGED] UTF-8 고정 읽기용
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;        // [CHANGED] UTF-8 고정 읽기용
+import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets; // [CHANGED] UTF-8 고정
+import java.nio.charset.StandardCharsets;
 
 public class BlokusClient extends JFrame {
 
@@ -39,7 +39,6 @@ public class BlokusClient extends JFrame {
 
     private boolean handlingLoginFail = false;
 
-    // [KEEP] 경로 하드코딩 유지 (요청사항 반영)
     private static final String CONFIG_FILE =
             "C:\\Users\\atlas\\Desktop\\Git\\NetworkProgramming\\Blokers\\src\\main\\resources\\server.txt";
 
@@ -94,7 +93,6 @@ public class BlokusClient extends JFrame {
             return null;
         }
 
-        // [CHANGED] FileReader -> UTF-8 고정(InputStreamReader)
         try (BufferedReader br = new BufferedReader(
                 new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8)
         )) {
@@ -409,7 +407,6 @@ class LoginScreen extends JPanel {
     public LoginScreen(BlokusClient client) {
         this.client = client;
 
-        // 배경 이미지를 먼저 로드 (resources 기준)
         Image img = null;
         java.net.URL url = getClass().getResource("/Images/Login.jpg");
         if (url != null) {
@@ -496,7 +493,6 @@ class LoginScreen extends JPanel {
         int ih = backgroundImage.getHeight(this);
         if (iw <= 0 || ih <= 0) { g2.dispose(); return; }
 
-        // ✅ contain: 비율 유지 + 전체 보이기(안 잘림)
         double scale = Math.min((double) pw / iw, (double) ph / ih);
 
         int w = (int) Math.round(iw * scale);
@@ -879,7 +875,7 @@ class RoomScreen extends JPanel {
     private final JButton kickButton;
 
     private JTabbedPane chatTabs;
-    private JTextPane chatAreaPane; // JTextArea -> JTextPane
+    private JTextPane chatAreaPane;
     private JTextPane systemArea;
     private final JTextField chatField;
 
@@ -892,7 +888,6 @@ class RoomScreen extends JPanel {
     private Style styleGreen;
     private Style styleWhisper;
 
-    // Styles for the main chat pane
     private Style styleChatDefault;
     private Style styleChatWhisper_Room;
 
@@ -919,7 +914,6 @@ class RoomScreen extends JPanel {
         chatTabs.setOpaque(true);
         chatTabs.setBackground(Color.WHITE);
 
-        // JTextArea -> JTextPane
         chatAreaPane = new JTextPane();
         chatAreaPane.setEditable(false);
         StyledDocument chatDoc = chatAreaPane.getStyledDocument();
@@ -976,9 +970,6 @@ class RoomScreen extends JPanel {
             }
         });
 
-        // =========================
-        // 전송 버튼(Button.jpg 적용 + 글자 흰색)
-        // =========================
         JButton sendButton = new JButton("전송");
         sendButton.setForeground(Color.WHITE);
         sendButton.setFont(sendButton.getFont().deriveFont(Font.BOLD, 14f));
@@ -1002,7 +993,6 @@ class RoomScreen extends JPanel {
                 sendChat();
             }
         });
-        // =========================
 
         chatInputPanel.add(chatField, BorderLayout.CENTER);
         chatInputPanel.add(sendButton, BorderLayout.EAST);
@@ -1015,9 +1005,6 @@ class RoomScreen extends JPanel {
         bottomPanel.setBackground(Color.WHITE);
         bottomPanel.setOpaque(true);
 
-        // =========================
-        // 게임 시작 버튼(Button.jpg 적용 + 글자 흰색)
-        // =========================
         startButton = new JButton("게임 시작");
         startButton.setForeground(Color.WHITE);
         startButton.setFont(startButton.getFont().deriveFont(Font.BOLD, 16f));
@@ -1042,11 +1029,7 @@ class RoomScreen extends JPanel {
             }
         });
         bottomPanel.add(startButton);
-        // =========================
 
-        // =========================
-        // 강퇴하기 버튼(Button.jpg 적용 + 글자 흰색)
-        // =========================
         kickButton = new JButton("강퇴하기");
         kickButton.setForeground(Color.WHITE);
         kickButton.setFont(kickButton.getFont().deriveFont(Font.BOLD, 16f));
@@ -1075,11 +1058,7 @@ class RoomScreen extends JPanel {
             }
         });
         bottomPanel.add(kickButton);
-        // =========================
 
-        // =========================
-        // 방 나가기 버튼(Button.jpg 적용 + 글자 흰색)
-        // =========================
         JButton leaveButton = new JButton("방 나가기");
         leaveButton.setForeground(Color.WHITE);
         leaveButton.setFont(leaveButton.getFont().deriveFont(Font.BOLD, 16f));
@@ -1104,7 +1083,6 @@ class RoomScreen extends JPanel {
             }
         });
         bottomPanel.add(leaveButton);
-        // =========================
 
         add(bottomPanel, BorderLayout.SOUTH);
     }
@@ -1147,14 +1125,12 @@ class RoomScreen extends JPanel {
 
         try {
             if (isWhisper) {
-                // Add to main chat pane with whisper style
                 StyledDocument chatDoc = chatAreaPane.getStyledDocument();
                 chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatWhisper_Room);
                 chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
                 chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
 
             } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
-                // Add to system pane
                 StyledDocument doc = systemArea.getStyledDocument();
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");
@@ -1186,7 +1162,6 @@ class RoomScreen extends JPanel {
                 chatTabs.setSelectedComponent(systemArea.getParent().getParent());
 
             } else {
-                // Add regular chat to main chat pane
                 StyledDocument chatDoc = chatAreaPane.getStyledDocument();
                 chatDoc.insertString(chatDoc.getLength(), message + "\n", styleChatDefault);
                 chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());

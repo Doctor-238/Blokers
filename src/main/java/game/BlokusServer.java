@@ -18,29 +18,15 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Vector;
 
-/**
- * Blokus 서버
- * - PPT 구조 준수:
- *   1) ServerSocket.accept()는 무한루프에서 블로킹 (다중 접속 서버) :contentReference[oaicite:3]{index=3}
- *   2) accept()로 얻은 Socket은 "클라이언트 핸들러 스레드"로 처리 :contentReference[oaicite:4]{index=4}
- *   3) 다중 사용자 관리는 Vector 방식(다자간 채팅 서버 방식) :contentReference[oaicite:5]{index=5}
- */
 public class BlokusServer {
     private static final int PORT = 12345;
 
-    // ===== [CHANGED] java.util.concurrent 제거 → Vector + synchronized 로 대체 =====
-    // 기존: ConcurrentHashMap<Integer, GameRoom> gameRooms
     private final Vector<GameRoom> gameRooms = new Vector<>();
 
-    // 기존: ConcurrentHashMap<String, ClientHandler> lobbyClients
-    // PPT 다자간 예제처럼 users(접속자 목록)를 Vector로 관리하는 방식에 맞춤 :contentReference[oaicite:6]{index=6}
     private final Vector<ClientHandler> lobbyClients = new Vector<>();
 
-    // 기존: AtomicInteger roomIdCounter
     private int roomIdCounter = 0;
 
-    // 기존: ConcurrentHashMap<String, Double> playerScores
-    // 점수는 파일(Properties)로 저장/로드하므로, 서버 메소드 자체를 synchronized로 보호
     private final Properties scoreProps = new Properties();
     private static final String SCORES_FILE = "blokus_scores.properties";
 
@@ -57,24 +43,20 @@ public class BlokusServer {
     public void startServer() {
         loadScores();
 
-        // PPT: ServerSocket 생성 후 accept() 무한 루프에서 클라이언트 접속 대기 :contentReference[oaicite:7]{index=7}
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("블로커스 서버 시작. 포트: " + PORT);
 
             while (true) {
-                Socket clientSocket = serverSocket.accept(); // blocking :contentReference[oaicite:8]{index=8}
+                Socket clientSocket = serverSocket.accept();
                 System.out.println("새 클라이언트 접속: " + clientSocket.getInetAddress());
 
-                // PPT: 다중 접속 서버는 accept 후 새 소켓을 스레드로 처리 :contentReference[oaicite:9]{index=9}
                 ClientHandler clientHandler = new ClientHandler(clientSocket, this);
-                clientHandler.start(); // 클라이언트별 수신 스레드 시작
+                clientHandler.start();
             }
         } catch (IOException e) {
             System.err.println("서버 소켓 오류: " + e.getMessage());
         }
     }
-
-    // ===== 점수 로딩/저장 (기존 로직 유지, 내부는 synchronized로 보호) =====
 
     private synchronized void loadScores() {
         try (InputStream input = new FileInputStream(SCORES_FILE)) {
@@ -113,7 +95,6 @@ public class BlokusServer {
     }
 
     public void sendLeaderboard(ClientHandler client) {
-        // [CHANGED] scoreProps 기반으로 동작하도록 수정(기존 ConcurrentHashMap 제거에 따른 변경)
         synchronized (this) {
             if (scoreProps.isEmpty()) {
                 client.sendMessage(Protocol.S2C_LEADERBOARD_DATA);
@@ -140,14 +121,10 @@ public class BlokusServer {
         client.sendMessage(leaderboardData.toString());
     }
 
-    // ===== 로비/방 관리 (컬렉션만 교체, 기능 로직 유지) =====
-
     public synchronized boolean isUsernameTakenAnywhere(String username) {
-        // [CHANGED] lobbyClients: Vector<ClientHandler> 순회로 변경
         for (ClientHandler c : lobbyClients) {
             if (c.getUsername() != null && c.getUsername().equalsIgnoreCase(username)) return true;
         }
-        // [CHANGED] gameRooms: Vector<GameRoom> 순회로 변경
         for (GameRoom room : gameRooms) {
             if (room.isPlayerInRoom(username)) return true;
         }
@@ -162,7 +139,6 @@ public class BlokusServer {
     }
 
     public synchronized void addClientToLobby(ClientHandler client) {
-        // [CHANGED] Vector 기반 관리
         if (!lobbyClients.contains(client)) lobbyClients.add(client);
         sendLeaderboard(client);
     }
@@ -172,7 +148,6 @@ public class BlokusServer {
     }
 
     public synchronized GameRoom createRoom(String roomName, ClientHandler host, GameRoom.GameMode gameMode) {
-        // [CHANGED] AtomicInteger → synchronized 증가
         int roomId = ++roomIdCounter;
 
         GameRoom newRoom = new GameRoom(roomId, roomName, host, this, gameMode);
@@ -242,14 +217,12 @@ public class BlokusServer {
     public synchronized void sendWhisper(ClientHandler from, String targetUsername, String message) {
         ClientHandler target = null;
 
-        // [CHANGED] 로비는 Vector 순회
         for (ClientHandler c : lobbyClients) {
             if (c.getUsername() != null && c.getUsername().equalsIgnoreCase(targetUsername)) {
                 target = c; break;
             }
         }
 
-        // [CHANGED] 방 목록도 Vector 순회
         if (target == null) {
             for (GameRoom room : gameRooms) {
                 List<ClientHandler> roomPlayers = room.getPlayers();
@@ -276,7 +249,6 @@ public class BlokusServer {
     }
 
     public synchronized GameRoom getRoom(int roomId) {
-        // [CHANGED] Map 조회 → Vector 순회로 조회
         for (GameRoom room : gameRooms) {
             if (room.getRoomId() == roomId) return room;
         }
@@ -284,7 +256,6 @@ public class BlokusServer {
     }
 
     public void onClientDisconnect(ClientHandler client) {
-        // 기존 로직 유지 (단, leave/remove에서 내부적으로 synchronized 처리)
         if (client.getCurrentRoom() != null) {
             GameRoom room = client.getCurrentRoom();
             room.handleDisconnectOrResign(client, "disconnect");

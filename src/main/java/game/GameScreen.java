@@ -16,54 +16,41 @@ import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
 
-/**
- * 실제 게임 화면(보드 + 인벤토리 + 상태/타이머 + 채팅)을 담당하는 패널
- */
 public class GameScreen extends JPanel {
     private BlokusClient client;
 
-    // ===== 버튼 배경 이미지 =====
     private Image buttonBgImage;
 
-    // ===== 보드 설정 =====
     private static final int BOARD_SIZE = 20;
     private static final int CELL_SIZE = 25;
     private static final int BOARD_PANEL_SIZE = BOARD_SIZE * CELL_SIZE;
 
     private final Color DARK_YELLOW = new Color(204, 153, 0);
 
-    // ===== 게임 상태 데이터 =====
     private int[][] board = new int[BOARD_SIZE][BOARD_SIZE];
 
-    // 내 손패 + 손패 프리뷰 캐시(같은 id/color 프리뷰를 재사용)
     private List<BlokusPiece> myHand = new ArrayList<>();
     private Map<String, PiecePreviewPanel> handPanelCache = new HashMap<>();
 
-    // 현재 선택된 조각(실제 배치용) + 선택된 프리뷰 패널
     private BlokusPiece selectedPiece = null;
     private PiecePreviewPanel selectedPanel = null;
     private int currentRotation = 0;
     private boolean currentFlipped = false;
 
-    // 내가 가진 색(1~4 또는 2색), 현재 인벤토리 보여줄 색, 현재 턴 색
     private int[] myColors = new int[0];
     private int inventoryDisplayColor = 0;
     private int currentTurnColor = 0;
 
-    // 내가 아직 플레이 가능한 색(점수 확정 안 한 색), 점수 확정된(리타이어) 색
     private Set<Integer> myActiveColors = new HashSet<>();
     private Set<Integer> resignedColors = new HashSet<>();
 
-    // 마우스 위치(그리드), 고스트(valid 여부), 관전자 여부
     private Point mouseGridPos = new Point(-1, -1);
     private boolean isGhostValid = false;
     private boolean amISpectating = false;
 
-    // 피어리스 모드 여부 + 게임 종료 여부
     private boolean isPeerlessMode = false;
     private boolean isGameFinished = false;
 
-    // ===== UI 컴포넌트 =====
     private JPanel boardPanel;
     private JPanel handPanel;
     private JScrollPane handScrollPane;
@@ -72,7 +59,6 @@ public class GameScreen extends JPanel {
     private JLabel centerLabel;
     private String[] playerNames = new String[0];
 
-    // 버튼들
     private JButton toggleColorButton;
     private JButton deselectButton;
     private JButton rotateButton;
@@ -81,14 +67,11 @@ public class GameScreen extends JPanel {
 
     private JLabel scoreLabel;
 
-    // 각 색 남은 시간(초) - classic에서 서버가 주는 타이머 표시용
     private int[] remainingTimes = {300, 300, 300, 300};
 
-    // 전체 게임 타이머(로컬 표시용)
     private Timer totalGameTimer;
     private int totalSecondsElapsed = 0;
 
-    // ===== 채팅 패널 =====
     private JLayeredPane chatPanel;
     private JPanel chatContentPanel;
     private JButton chatFoldButton;
@@ -101,7 +84,6 @@ public class GameScreen extends JPanel {
     private JTextPane systemArea;
     private JTextField chatField;
 
-    // 시스템 탭 스타일
     private Style styleDefault;
     private Style styleRed;
     private Style styleBlue;
@@ -109,13 +91,9 @@ public class GameScreen extends JPanel {
     private Style styleGreen;
     private Style styleWhisper;
 
-    // 채팅 탭 스타일
     private Style styleChatDefault;
     private Style styleChatWhisper;
 
-    /**
-     * 배경 클릭 시 선택 해제 처리
-     */
     private MouseAdapter backgroundClickListener = new MouseAdapter() {
         @Override
         public void mouseClicked(MouseEvent e) {
@@ -130,7 +108,6 @@ public class GameScreen extends JPanel {
     public GameScreen(BlokusClient client) {
         this.client = client;
 
-        // [이미지 로드]
         try {
             java.net.URL imgUrl = getClass().getResource("/Images/Button.jpg");
             if (imgUrl != null) {
@@ -147,7 +124,6 @@ public class GameScreen extends JPanel {
 
         addMouseListener(backgroundClickListener);
 
-        // ===== 상단 패널 =====
         JPanel topPanel = new JPanel(new BorderLayout(10, 0));
         topPanel.setPreferredSize(new Dimension(0, 60));
         topPanel.addMouseListener(backgroundClickListener);
@@ -165,7 +141,6 @@ public class GameScreen extends JPanel {
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 15));
         controlPanel.addMouseListener(backgroundClickListener);
 
-        // 커스텀 버튼 적용
         rotateButton = createStyledButton("회전 (r)");
         rotateButton.addActionListener(e -> rotateSelectedPiece());
 
@@ -182,7 +157,6 @@ public class GameScreen extends JPanel {
 
         add(topPanel, BorderLayout.NORTH);
 
-        // ===== 보드 패널 =====
         boardPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -198,7 +172,6 @@ public class GameScreen extends JPanel {
         addMouseListeners();
         add(boardPanel, BorderLayout.CENTER);
 
-        // ===== 하단 패널 =====
         JPanel southPanel = new JPanel(new BorderLayout(5, 5));
         southPanel.addMouseListener(backgroundClickListener);
 
@@ -236,7 +209,6 @@ public class GameScreen extends JPanel {
         southPanel.add(handScrollPane, BorderLayout.CENTER);
         add(southPanel, BorderLayout.SOUTH);
 
-        // ===== 채팅 패널 =====
         setupChatPanel();
 
         rotateButton.setFocusable(false);
@@ -248,9 +220,6 @@ public class GameScreen extends JPanel {
         setupKeyBindings();
     }
 
-    /**
-     * 배경 이미지가 적용된 버튼 생성 헬퍼
-     */
     private JButton createStyledButton(String text) {
         JButton btn = new JButton(text) {
             @Override
@@ -278,7 +247,6 @@ public class GameScreen extends JPanel {
         chatContentPanel = new JPanel(new BorderLayout());
         chatTabs = new JTabbedPane();
 
-        // 채팅 탭
         chatAreaPane = new JTextPane();
         chatAreaPane.setEditable(false);
         StyledDocument chatDoc = chatAreaPane.getStyledDocument();
@@ -294,7 +262,6 @@ public class GameScreen extends JPanel {
 
         chatTabs.addTab("채팅", new JScrollPane(chatAreaPane));
 
-        // 시스템 탭
         systemArea = new JTextPane();
         systemArea.setEditable(false);
         StyledDocument doc = systemArea.getStyledDocument();
@@ -327,7 +294,6 @@ public class GameScreen extends JPanel {
         chatTabs.addTab("시스템", new JScrollPane(systemArea));
         chatContentPanel.add(chatTabs, BorderLayout.CENTER);
 
-        // 입력창
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
         chatField.addActionListener(e -> sendChat());
@@ -339,7 +305,6 @@ public class GameScreen extends JPanel {
         chatInputPanel.add(sendButton, BorderLayout.EAST);
         chatContentPanel.add(chatInputPanel, BorderLayout.SOUTH);
 
-        // 접기 버튼
         chatFoldButton = createStyledButton("◀");
         chatFoldButton.setFont(new Font("Dialog", Font.BOLD, 10));
         chatFoldButton.setMargin(new Insets(0, 0, 0, 0));
@@ -850,8 +815,6 @@ public class GameScreen extends JPanel {
         if (seconds < 0) seconds = 0;
         return String.format("%02d:%02d", seconds / 60, seconds % 60);
     }
-
-    // ===== 인벤토리 UI 갱신 =====
 
     private void updateHandPanelUI() {
         handPanel.removeAll();

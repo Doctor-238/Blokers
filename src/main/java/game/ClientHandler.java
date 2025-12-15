@@ -8,7 +8,6 @@ import java.net.Socket;
 import java.net.SocketException;
 
 public class ClientHandler extends Thread {
-    // [CHANGED] final로 고정 (생성 후 변경될 이유 없음)
     private final Socket socket;
     private final BlokusServer server;
 
@@ -19,7 +18,6 @@ public class ClientHandler extends Thread {
     private GameRoom currentRoom;
     private boolean authenticated = false;
 
-    // [CHANGED] cleanup() 중복 실행 방지 플래그
     private boolean closed = false;
 
     public ClientHandler(Socket socket, BlokusServer server) {
@@ -30,19 +28,17 @@ public class ClientHandler extends Thread {
     @Override
     public void run() {
         try {
-            // ObjectStream 사용 유지
             out = new ObjectOutputStream(socket.getOutputStream());
             out.flush();
             in = new ObjectInputStream(socket.getInputStream());
 
-            // [CHANGED] readObject() 결과 타입을 확인해서 안전하게 처리
             while (true) {
-                Object obj = in.readObject(); // EOF면 예외 발생
+                Object obj = in.readObject();
                 if (obj == null) break;
 
                 if (!(obj instanceof String)) {
                     System.err.println("String이 아닌 객체 수신: " + obj.getClass().getName());
-                    continue; // 현재 프로토콜이 String 기반이므로 무시
+                    continue;
                 }
 
                 String message = (String) obj;
@@ -58,17 +54,15 @@ public class ClientHandler extends Thread {
         } catch (ClassNotFoundException e) {
             System.err.println("알 수 없는 객체 수신: " + e.getMessage());
         } finally {
-            cleanup(); // [CHANGED] cleanup()는 1회만 실행되도록 내부에서 가드
+            cleanup();
         }
     }
 
     private void handleMessage(String message) {
-        // [CHANGED] null/빈 문자열 방어
         if (message == null || message.isEmpty()) {
             return;
         }
 
-        // 기존 방식 유지: command:data... 형태
         String[] parts = message.split(":", 3);
         String command = parts[0];
         String data = (parts.length > 1) ? parts[1] : "";
@@ -79,7 +73,6 @@ public class ClientHandler extends Thread {
                 return;
             }
 
-            // 기존 구조 유지: switch 분기
             switch (command) {
                 case Protocol.C2S_LOGIN:
                     handleLegacyLogin(data);
@@ -94,7 +87,6 @@ public class ClientHandler extends Thread {
                     break;
 
                 case Protocol.C2S_CREATE_ROOM:
-                    // 기존 동작 유지: mode가 없으면 CLASSIC
                     if (parts.length == 3) {
                         handleCreateRoom(parts[1], parts[2]);
                     } else {
@@ -119,8 +111,6 @@ public class ClientHandler extends Thread {
                     break;
 
                 case Protocol.C2S_PLACE_BLOCK:
-                    // [CHANGED] 원래 로직 유지하되, 안전하게 substring 처리
-                    // "PLACE_BLOCK:<data...>" 형태라고 가정
                     int idx = Protocol.C2S_PLACE_BLOCK.length() + 1;
                     if (message.length() <= idx) {
                         sendMessage(Protocol.S2C_INVALID_MOVE + ":잘못된 블록 데이터입니다.");
@@ -142,12 +132,10 @@ public class ClientHandler extends Thread {
                     break;
 
                 case Protocol.C2S_CHAT:
-                    // 기존: 방 안에서만 채팅 가능
                     handleChat(data);
                     break;
 
                 case Protocol.C2S_WHISPER:
-                    // [CHANGED] whisper는 메시지 내용에 ":" 포함 가능하므로 substring + split(2) 유지
                     String body = message.substring(Protocol.C2S_WHISPER.length() + 1);
                     String[] whisperParts = body.split(":", 2);
                     if (whisperParts.length == 2) {
@@ -169,7 +157,6 @@ public class ClientHandler extends Thread {
     private void handleLegacyLogin(String usernameRaw) {
         if (usernameRaw == null || usernameRaw.trim().isEmpty()) {
             sendMessage(Protocol.S2C_LOGIN_FAIL + ":유효하지 않은 이름입니다.");
-            // [CHANGED] 즉시 정리 (단 cleanup()는 중복 실행 방지됨)
             cleanup();
             return;
         }
@@ -272,12 +259,10 @@ public class ClientHandler extends Thread {
             System.out.println("Server (S2C to " + (username != null ? username : "???") + "): " + message);
         } catch (IOException e) {
             System.err.println("S2C Send Error to " + username + ": " + e.getMessage());
-            // [CHANGED] send 중 오류가 나면 정리 (중복 cleanup 방지됨)
             cleanup();
         }
     }
 
-    // [CHANGED] cleanup()는 여러 경로에서 호출될 수 있으므로 1회만 실행되게 보장
     private synchronized void cleanup() {
         if (closed) return;
         closed = true;
@@ -286,7 +271,6 @@ public class ClientHandler extends Thread {
         try { if (out != null) out.close(); } catch (IOException ignored) {}
         try { if (socket != null) socket.close(); } catch (IOException ignored) {}
 
-        // 서버 쪽 상태 정리(로비/방 제거 등)
         server.onClientDisconnect(this);
     }
 
