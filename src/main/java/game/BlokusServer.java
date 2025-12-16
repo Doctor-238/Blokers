@@ -1,43 +1,95 @@
 package game;
 
-import java.io.FileDescriptor;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
-
+import javax.swing.*;
+import javax.swing.text.DefaultCaret;
+import java.awt.*;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Vector;
 
-public class BlokusServer {
+public class BlokusServer extends JFrame {
     private static final int PORT = 12345;
 
+    private JTextArea logArea;
+
     private final Vector<GameRoom> gameRooms = new Vector<>();
-
     private final Vector<ClientHandler> lobbyClients = new Vector<>();
-
     private int roomIdCounter = 0;
 
     private final Properties scoreProps = new Properties();
     private static final String SCORES_FILE = "blokus_scores.properties";
 
+    public BlokusServer() {
+        super("Blokus Server Log");
+        initGUI();
+    }
+
+    private void initGUI() {
+        setSize(500, 400);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLayout(new BorderLayout());
+
+        logArea = new JTextArea();
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+
+        DefaultCaret caret = (DefaultCaret) logArea.getCaret();
+        caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
+
+        JScrollPane scrollPane = new JScrollPane(logArea);
+        add(scrollPane, BorderLayout.CENTER);
+
+        redirectSystemStreams();
+
+        setVisible(true);
+    }
+
+    private void redirectSystemStreams() {
+        OutputStream out = new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                updateTextArea(String.valueOf((char) b));
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                updateTextArea(new String(b, off, len));
+            }
+
+            @Override
+            public void write(byte[] b) throws IOException {
+                updateTextArea(new String(b));
+            }
+        };
+
+        PrintStream printStream = new PrintStream(out, true);
+        System.setOut(printStream);
+        System.setErr(printStream);
+    }
+
+    private void updateTextArea(final String text) {
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                logArea.append(text);
+            }
+        });
+    }
+
     public static void main(String[] args) {
-        try {
-            System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
-            System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, "UTF-8"));
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        new BlokusServer().startServer();
+        final BlokusServer serverWindow = new BlokusServer();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                serverWindow.startServer();
+            }
+        }).start();
     }
 
     public void startServer() {
