@@ -40,7 +40,7 @@ public class BlokusClient extends JFrame {
     private boolean handlingLoginFail = false;
 
     private static final String CONFIG_FILE =
-            "C:\\Users\\atlas\\Desktop\\Git\\NetworkProgramming\\Blokers\\src\\main\\resources\\server.txt";
+            "src/main/resources/server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
