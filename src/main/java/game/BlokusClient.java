@@ -135,6 +135,7 @@ public class BlokusClient extends JFrame {
 
         loginScreen.setLoginControlsEnabled(false, host + ":" + port + " 서버에 연결 시도 중...");
 
+        //외부참조 SwingWorker
         SwingWorker<String, Void> loginWorker = new SwingWorker<>() {
             @Override
             protected String doInBackground() {
@@ -200,6 +201,7 @@ public class BlokusClient extends JFrame {
         String command = parts[0];
         String data = (parts.length > 1) ? parts[1] : null;
 
+        //외부참조 invokeLater
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -356,11 +358,13 @@ public class BlokusClient extends JFrame {
 
     public static void main(String[] args) {
         try {
+            //외부참조 System.setOut
             System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
             System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, "UTF-8"));
         } catch (Exception e) {
             e.printStackTrace();
         }
+        //외부참조 invokeLater
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -418,6 +422,7 @@ class LoginScreen extends JPanel {
 
         setOpaque(false);
 
+        //외부참조 GridBagLayout
         setLayout(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
@@ -546,6 +551,7 @@ class LobbyScreen extends JPanel {
             }
         };
 
+        //외부참조 Jtable
         leaderboardTable = new JTable(leaderboardModel);
         leaderboardTable.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
         leaderboardTable.setRowHeight(25);
@@ -910,6 +916,7 @@ class RoomScreen extends JPanel {
         add(new JScrollPane(playerList), BorderLayout.CENTER);
 
         JPanel chatPanel = new JPanel(new BorderLayout());
+        //외부참조 JTabbedPane
         chatTabs = new JTabbedPane();
         chatTabs.setOpaque(true);
         chatTabs.setBackground(Color.WHITE);

@@ -21,6 +21,7 @@ public class BlokusServer extends JFrame {
     private final Vector<ClientHandler> lobbyClients = new Vector<>();
     private int roomIdCounter = 0;
 
+    //외부참조 Properties
     private final Properties scoreProps = new Properties();
     private static final String SCORES_FILE = "blokus_scores.properties";
 
@@ -68,11 +69,13 @@ public class BlokusServer extends JFrame {
         };
 
         PrintStream printStream = new PrintStream(out, true);
+        //외부참조 System.setOut
         System.setOut(printStream);
         System.setErr(printStream);
     }
 
     private void updateTextArea(final String text) {
+        //외부참조 invokeLater
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {

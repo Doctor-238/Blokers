@@ -117,6 +117,7 @@ public class GameScreen extends JPanel {
             e.printStackTrace();
         }
 
+        //외부참조 EnableInputMethods
         this.enableInputMethods(false);
 
         setLayout(new BorderLayout(10, 10));
@@ -132,6 +133,7 @@ public class GameScreen extends JPanel {
         statusPanel.setPreferredSize(new Dimension(250, 60));
         topPanel.add(statusPanel, BorderLayout.WEST);
 
+        //외부참조 GridBagLayout
         JPanel centerPanel = new JPanel(new GridBagLayout());
         centerLabel = new JLabel("00:00");
         centerLabel.setFont(new Font("맑은 고딕", Font.BOLD, 36));
@@ -142,6 +144,7 @@ public class GameScreen extends JPanel {
         controlPanel.addMouseListener(backgroundClickListener);
 
         rotateButton = createStyledButton("회전 (r)");
+        //외부참조 람다 표현식(e ->())
         rotateButton.addActionListener(e -> rotateSelectedPiece());
 
         flipButton = createStyledButton("뒤집기 (f)");
@@ -181,6 +184,7 @@ public class GameScreen extends JPanel {
 
         toggleColorButton = createStyledButton("블록 전환 (e)");
         toggleColorButton.setVisible(false);
+        //외부참조 람다 표현식(e ->())
         toggleColorButton.addActionListener(e -> toggleInventoryColor());
         southWestButtons.add(toggleColorButton);
 
@@ -197,6 +201,7 @@ public class GameScreen extends JPanel {
 
         southPanel.add(southTopPanel, BorderLayout.NORTH);
 
+        //외부참조 WrapLayout
         handPanel = new JPanel(new WrapLayout(WrapLayout.LEFT, 5, 5));
         handPanel.setBackground(Color.WHITE);
         handPanel.addMouseListener(backgroundClickListener);
@@ -241,10 +246,12 @@ public class GameScreen extends JPanel {
     }
 
     private void setupChatPanel() {
+        //외부참조 JLayeredPane
         chatPanel = new JLayeredPane();
         chatPanel.setPreferredSize(new Dimension(CHAT_EXPANDED_WIDTH, 0));
 
         chatContentPanel = new JPanel(new BorderLayout());
+        //외부참조 JTabbedPane
         chatTabs = new JTabbedPane();
 
         chatAreaPane = new JTextPane();
@@ -296,6 +303,7 @@ public class GameScreen extends JPanel {
 
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
+        //외부참조 람다 표현식(e ->())
         chatField.addActionListener(e -> sendChat());
 
         JButton sendButton = createStyledButton("전송");
@@ -343,6 +351,7 @@ public class GameScreen extends JPanel {
             super.paintComponent(g);
 
             Graphics2D g2d = (Graphics2D) g;
+            //외부참조 KEY_ANTIALIASING
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             if (playerNames == null || playerNames.length == 0) return;
@@ -436,6 +445,7 @@ public class GameScreen extends JPanel {
     }
 
     private void setupKeyBindings() {
+        //외부참조 Key Bindings
         InputMap im = this.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         ActionMap am = this.getActionMap();
 
@@ -516,6 +526,7 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('D'), "navigateRight");
         im.put(KeyStroke.getKeyStroke('ㅇ'), "navigateRight");
 
+        //외부참조 Key Bindings
         am.put("navigateUp", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("up"); }});
         am.put("navigateLeft", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("left"); }});
         am.put("navigateDown", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("down"); }});
@@ -613,6 +624,7 @@ public class GameScreen extends JPanel {
         centerLabel.setForeground(Color.BLACK);
 
         totalGameTimer = new Timer();
+        //외부참조 TimerTask
         totalGameTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -621,6 +633,7 @@ public class GameScreen extends JPanel {
                     return;
                 }
                 totalSecondsElapsed++;
+                //외부참조 invokeLater
                 SwingUtilities.invokeLater(() -> centerLabel.setText(formatTime(totalSecondsElapsed)));
             }
         }, 1000, 1000);

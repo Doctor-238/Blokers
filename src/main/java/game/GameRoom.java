@@ -13,6 +13,7 @@ public class GameRoom implements Serializable {
     private String roomName;
     private ClientHandler host;
 
+    //외부참조 Transient
     private transient BlokusServer server;
 
     private GameMode gameMode;
@@ -37,12 +38,14 @@ public class GameRoom implements Serializable {
     private static final int PEERLESS_COUNTDOWN_SECONDS = 3;
     private static final int PEERLESS_MAIN_TIME_SECONDS = 300;
 
+    //외부참조 Transient
     private transient Timer gameTimer;
     private transient TimerTask currentTimerTask;
 
     private final Map<Integer, Integer> remainingTime = new HashMap<>();
     private final Map<Integer, Boolean> isTimedOut = new HashMap<>();
 
+    //외부참조 Transient
     private transient Timer peerlessTimer;
 
     private transient int peerlessSecondsRemaining = 0;
@@ -164,6 +167,7 @@ public class GameRoom implements Serializable {
 
         if (peerlessTimer != null) peerlessTimer.cancel();
         peerlessTimer = new Timer();
+        //외부참조 TimerTask
         peerlessTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -215,6 +219,7 @@ public class GameRoom implements Serializable {
 
         if (peerlessTimer != null) peerlessTimer.cancel();
         peerlessTimer = new Timer();
+        //외부참조 TimerTask
         peerlessTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -246,6 +251,7 @@ public class GameRoom implements Serializable {
 
         if (peerlessTimer != null) peerlessTimer.cancel();
         peerlessTimer = new Timer();
+        //외부참조 TimerTask
         peerlessTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -682,6 +688,7 @@ public class GameRoom implements Serializable {
             }
         };
         if (gameTimer == null) gameTimer = new Timer();
+        //외부참조 TimerTask
         gameTimer.scheduleAtFixedRate(currentTimerTask, 1000, 1000);
     }
 
