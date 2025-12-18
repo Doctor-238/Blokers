@@ -8,16 +8,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileDescriptor;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.io.PrintStream;
+import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
@@ -39,8 +30,7 @@ public class BlokusClient extends JFrame {
 
     private boolean handlingLoginFail = false;
 
-    private static final String CONFIG_FILE =
-            "src/main/resources/server.txt";
+    private static final String CONFIG_FILE = "server.txt";
 
     public BlokusClient() {
         setTitle("블로커스 (Blokus)");
@@ -135,13 +125,13 @@ public class BlokusClient extends JFrame {
 
         loginScreen.setLoginControlsEnabled(false, host + ":" + port + " 서버에 연결 시도 중...");
 
-        //외부참조 SwingWorker
         SwingWorker<String, Void> loginWorker = new SwingWorker<>() {
             @Override
             protected String doInBackground() {
                 try {
                     connect(host, port);
-                    sendMessage(Protocol.C2S_LOGIN + ":" + username);
+                    // [Refactoring] BlokusMsg 전송
+                    sendMessage(new BlokusMsg(Protocol.C2S_LOGIN, username));
                     return "LOGIN_ATTEMPTED";
                 } catch (IOException e) {
                     return "CONNECT_FAILED:" + e.getMessage();
@@ -195,13 +185,14 @@ public class BlokusClient extends JFrame {
         }
     }
 
-    public void handleServerMessage(String message) {
-        System.out.println("서버 (S2C): " + message);
-        String[] parts = message.split(":", 2);
-        String command = parts[0];
-        String data = (parts.length > 1) ? parts[1] : null;
+    // [Refactoring] BlokusMsg 수신 처리
+    public void handleServerMessage(BlokusMsg msg) {
+        System.out.println("서버 (S2C): " + msg);
 
-        //외부참조 invokeLater
+        int command = msg.getCode();
+        String data = msg.getData();
+        String sender = msg.getUsername(); // 채팅이나 귓속말 등에서 사용
+
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -227,6 +218,7 @@ public class BlokusClient extends JFrame {
                         break;
 
                     case Protocol.S2C_JOIN_SUCCESS:
+                        // Data format: "RoomID:RoomName"
                         roomScreen.setRoomName(data.split(":")[1]);
                         roomScreen.clearChat();
                         cardLayout.show(mainPanel, "ROOM");
@@ -243,7 +235,7 @@ public class BlokusClient extends JFrame {
                     case Protocol.S2C_KICKED:
                         JOptionPane.showMessageDialog(BlokusClient.this, "방에서 강퇴당했습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
                         cardLayout.show(mainPanel, "LOBBY");
-                        sendMessage(Protocol.C2S_GET_LEADERBOARD);
+                        sendMessage(new BlokusMsg(Protocol.C2S_GET_LEADERBOARD));
                         break;
 
                     case Protocol.S2C_GAME_START:
@@ -315,23 +307,31 @@ public class BlokusClient extends JFrame {
                         gameScreen.setGameFinished(true);
                         JOptionPane.showMessageDialog(BlokusClient.this, "게임 종료!\n" + data, "게임 종료", JOptionPane.INFORMATION_MESSAGE);
                         cardLayout.show(mainPanel, "LOBBY");
-                        sendMessage(Protocol.C2S_GET_LEADERBOARD);
+                        sendMessage(new BlokusMsg(Protocol.C2S_GET_LEADERBOARD));
                         break;
 
                     case Protocol.S2C_CHAT:
-                        roomScreen.appendChatMessage(data);
-                        gameScreen.appendChatMessage(data);
+                        // Server sends: user in 'username', message in 'data'
+                        String chatMsg = "[" + sender + "]: " + data;
+                        roomScreen.appendChatMessage(chatMsg);
+                        gameScreen.appendChatMessage(chatMsg);
                         break;
 
                     case Protocol.S2C_WHISPER:
-                        roomScreen.appendChatMessage(data, true);
-                        gameScreen.appendChatMessage(data, true);
+                        // 귓속말 형식 구성: [귓속말 from User]: Message
+                        // or [귓속말 to User]: Message (내가 보낸 거 확인용)
+                        String whisperPrefix = data.startsWith("To: ") ? "[귓속말 to " : "[귓속말 from ";
+                        String whisperBody = data.startsWith("To: ") ? data.substring(4) : data;
+                        String whisperFull = whisperPrefix + sender + "]:" + whisperBody;
+
+                        roomScreen.appendChatMessage(whisperFull, true);
+                        gameScreen.appendChatMessage(whisperFull, true);
                         break;
 
                     case Protocol.S2C_SYSTEM_MSG:
                         if (data != null && data.contains("로비로")) {
                             cardLayout.show(mainPanel, "LOBBY");
-                            sendMessage(Protocol.C2S_GET_LEADERBOARD);
+                            sendMessage(new BlokusMsg(Protocol.C2S_GET_LEADERBOARD));
                         }
                         String sysMsg = "[시스템]:" + data;
                         roomScreen.appendChatMessage(sysMsg);
@@ -342,11 +342,14 @@ public class BlokusClient extends JFrame {
         });
     }
 
-    public void sendMessage(String msg) {
+    // [Refactoring] BlokusMsg 전송 메소드
+    public void sendMessage(BlokusMsg msg) {
         if (out != null) {
             try {
                 out.writeObject(msg);
                 out.flush();
+                // 동일 객체 전송 시 캐싱 방지
+                out.reset();
             } catch (IOException e) {
                 System.err.println("C2S Send Error: " + e.getMessage());
                 handleConnectionLost();
@@ -358,13 +361,11 @@ public class BlokusClient extends JFrame {
 
     public static void main(String[] args) {
         try {
-            //외부참조 System.setOut
             System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
             System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, "UTF-8"));
         } catch (Exception e) {
             e.printStackTrace();
         }
-        //외부참조 invokeLater
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -386,9 +387,11 @@ class ClientReceiver extends Thread {
     @Override
     public void run() {
         try {
-            String message;
-            while ((message = (String) in.readObject()) != null) {
-                client.handleServerMessage(message);
+            Object obj;
+            while ((obj = in.readObject()) != null) {
+                if (obj instanceof BlokusMsg) {
+                    client.handleServerMessage((BlokusMsg) obj);
+                }
             }
         } catch (ClassNotFoundException e) {
             System.err.println("잘못된 객체 수신: " + e.getMessage());
@@ -398,6 +401,9 @@ class ClientReceiver extends Thread {
         }
     }
 }
+
+// UI 클래스들은 BlokusClient의 sendMessage 변경에 맞춰 호출 부분만 수정됨
+// (LoginScreen은 위에서 수정됨. 아래는 LobbyScreen, RoomScreen)
 
 class LoginScreen extends JPanel {
     private final BlokusClient client;
@@ -422,7 +428,6 @@ class LoginScreen extends JPanel {
 
         setOpaque(false);
 
-        //외부참조 GridBagLayout
         setLayout(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
@@ -551,7 +556,6 @@ class LobbyScreen extends JPanel {
             }
         };
 
-        //외부참조 Jtable
         leaderboardTable = new JTable(leaderboardModel);
         leaderboardTable.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
         leaderboardTable.setRowHeight(25);
@@ -613,7 +617,8 @@ class LobbyScreen extends JPanel {
         refreshLeaderboardButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                client.sendMessage(Protocol.C2S_GET_LEADERBOARD);
+                // [Refactoring] BlokusMsg 사용
+                client.sendMessage(new BlokusMsg(Protocol.C2S_GET_LEADERBOARD));
             }
         });
         refreshLeaderboardButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
@@ -728,7 +733,8 @@ class LobbyScreen extends JPanel {
         refreshRoomsButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                client.sendMessage(Protocol.C2S_GET_ROOM_LIST);
+                // [Refactoring] BlokusMsg 사용
+                client.sendMessage(new BlokusMsg(Protocol.C2S_GET_ROOM_LIST));
             }
         });
         refreshRoomsButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
@@ -804,7 +810,8 @@ class LobbyScreen extends JPanel {
             String mode = (modeComboBox.getSelectedIndex() == 0) ? "CLASSIC" : "PEERLESS";
 
             if (roomName != null && !roomName.trim().isEmpty()) {
-                client.sendMessage(Protocol.C2S_CREATE_ROOM + ":" + roomName + ":" + mode);
+                // [Refactoring] BlokusMsg 사용
+                client.sendMessage(new BlokusMsg(Protocol.C2S_CREATE_ROOM, roomName + ":" + mode));
             } else {
                 JOptionPane.showMessageDialog(this, "방 이름을 입력해야 합니다.", "오류", JOptionPane.ERROR_MESSAGE);
             }
@@ -812,7 +819,7 @@ class LobbyScreen extends JPanel {
     }
 
     private void showRoomList() {
-        client.sendMessage(Protocol.C2S_GET_ROOM_LIST);
+        client.sendMessage(new BlokusMsg(Protocol.C2S_GET_ROOM_LIST));
         cardLayout.show(this, ROOM_LIST_PANEL);
     }
 
@@ -821,7 +828,8 @@ class LobbyScreen extends JPanel {
         if (selected != null && selected.startsWith("[ID:")) {
             try {
                 String roomId = selected.split("]")[0].split(":")[1].trim();
-                client.sendMessage(Protocol.C2S_JOIN_ROOM + ":" + roomId);
+                // [Refactoring] BlokusMsg 사용
+                client.sendMessage(new BlokusMsg(Protocol.C2S_JOIN_ROOM, roomId));
             } catch (Exception ex) {
                 System.err.println("잘못된 방 선택: " + selected);
             }
@@ -916,7 +924,6 @@ class RoomScreen extends JPanel {
         add(new JScrollPane(playerList), BorderLayout.CENTER);
 
         JPanel chatPanel = new JPanel(new BorderLayout());
-        //외부참조 JTabbedPane
         chatTabs = new JTabbedPane();
         chatTabs.setOpaque(true);
         chatTabs.setBackground(Color.WHITE);
@@ -1032,7 +1039,8 @@ class RoomScreen extends JPanel {
         startButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                client.sendMessage(Protocol.C2S_START_GAME);
+                // [Refactoring] BlokusMsg 사용
+                client.sendMessage(new BlokusMsg(Protocol.C2S_START_GAME));
             }
         });
         bottomPanel.add(startButton);
@@ -1060,7 +1068,8 @@ class RoomScreen extends JPanel {
                 String selected = playerList.getSelectedValue();
                 if (selected != null) {
                     String targetUser = selected.split(" ")[0];
-                    client.sendMessage(Protocol.C2S_KICK_PLAYER + ":" + targetUser);
+                    // [Refactoring] BlokusMsg 사용
+                    client.sendMessage(new BlokusMsg(Protocol.C2S_KICK_PLAYER, targetUser));
                 }
             }
         });
@@ -1086,7 +1095,8 @@ class RoomScreen extends JPanel {
         leaveButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                client.sendMessage(Protocol.C2S_LEAVE_ROOM);
+                // [Refactoring] BlokusMsg 사용
+                client.sendMessage(new BlokusMsg(Protocol.C2S_LEAVE_ROOM));
             }
         });
         bottomPanel.add(leaveButton);
@@ -1106,7 +1116,8 @@ class RoomScreen extends JPanel {
 
             if (command.equals("/r")) {
                 if (parts.length == 3 && !parts[1].trim().isEmpty() && !parts[2].trim().isEmpty()) {
-                    client.sendMessage(Protocol.C2S_WHISPER + ":" + parts[1] + ":" + parts[2]);
+                    // [Refactoring] BlokusMsg (Code: WHISPER, Data: "Target:Message")
+                    client.sendMessage(new BlokusMsg(Protocol.C2S_WHISPER, parts[1] + ":" + parts[2]));
                 } else if (parts.length < 2) {
                     appendChatMessage("[시스템]: 귓속말 사용법: /r [닉네임] [메세지]");
                 } else if (parts.length == 2) {
@@ -1118,7 +1129,8 @@ class RoomScreen extends JPanel {
                 appendChatMessage("[시스템]: 알 수 없는 명령어입니다. (사용 가능: /r)");
             }
         } else {
-            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
+            // [Refactoring] BlokusMsg 사용
+            client.sendMessage(new BlokusMsg(Protocol.C2S_CHAT, message));
         }
         chatField.setText("");
     }
@@ -1137,7 +1149,8 @@ class RoomScreen extends JPanel {
                 chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
                 chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
 
-            } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+            } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG + ":")) { // 수정: S2C_SYSTEM_MSG 체크 추가
+                // 시스템 메시지 처리 로직 유지
                 StyledDocument doc = systemArea.getStyledDocument();
                 if (message.contains("턴 변경 → ")) {
                     String[] parts = message.split("→ ");

@@ -28,6 +28,7 @@ public class ClientHandler extends Thread {
     @Override
     public void run() {
         try {
+            // ObjectStream 생성 순서 중요 (Output 먼저)
             out = new ObjectOutputStream(socket.getOutputStream());
             out.flush();
             in = new ObjectInputStream(socket.getInputStream());
@@ -36,15 +37,16 @@ public class ClientHandler extends Thread {
                 Object obj = in.readObject();
                 if (obj == null) break;
 
-                if (!(obj instanceof String)) {
-                    System.err.println("String이 아닌 객체 수신: " + obj.getClass().getName());
-                    continue;
+                if (obj instanceof BlokusMsg) {
+                    BlokusMsg msg = (BlokusMsg) obj;
+
+                    // 로그 출력 (필터링은 서버 GUI에서 처리)
+                    System.out.println("Client (" + (username != null ? username : "???") + "): " + msg);
+
+                    handleMessage(msg);
+                } else {
+                    System.err.println("올바르지 않은 객체 수신: " + obj.getClass().getName());
                 }
-
-                String message = (String) obj;
-                System.out.println((username != null ? username : "???") + " (C2S): " + message);
-
-                handleMessage(message);
             }
 
         } catch (SocketException | EOFException e) {
@@ -58,24 +60,20 @@ public class ClientHandler extends Thread {
         }
     }
 
-    private void handleMessage(String message) {
-        if (message == null || message.isEmpty()) {
-            return;
-        }
-
-        String[] parts = message.split(":", 3);
-        String command = parts[0];
-        String data = (parts.length > 1) ? parts[1] : "";
+    private void handleMessage(BlokusMsg msg) {
+        int code = msg.getCode();
+        String data = msg.getData(); // 이제 명령어 부분이 빠진 순수 데이터만 들어옴
 
         try {
-            if (!authenticated && !command.equals(Protocol.C2S_LOGIN)) {
-                sendMessage(Protocol.S2C_LOGIN_FAIL + ":로그인이 필요합니다.");
+            // 로그인 전에는 로그인 패킷만 허용
+            if (!authenticated && code != Protocol.C2S_LOGIN) {
+                sendMessage(new BlokusMsg(Protocol.S2C_LOGIN_FAIL, "로그인이 필요합니다."));
                 return;
             }
 
-            switch (command) {
+            switch (code) {
                 case Protocol.C2S_LOGIN:
-                    handleLegacyLogin(data);
+                    handleLogin(data);
                     break;
 
                 case Protocol.C2S_GET_LEADERBOARD:
@@ -87,8 +85,10 @@ public class ClientHandler extends Thread {
                     break;
 
                 case Protocol.C2S_CREATE_ROOM:
-                    if (parts.length == 3) {
-                        handleCreateRoom(parts[1], parts[2]);
+                    // Data format: "RoomName" or "RoomName:Mode"
+                    if (data != null && data.contains(":")) {
+                        String[] parts = data.split(":", 2);
+                        handleCreateRoom(parts[0], parts[1]);
                     } else {
                         handleCreateRoom(data, "CLASSIC");
                     }
@@ -111,12 +111,7 @@ public class ClientHandler extends Thread {
                     break;
 
                 case Protocol.C2S_PLACE_BLOCK:
-                    int idx = Protocol.C2S_PLACE_BLOCK.length() + 1;
-                    if (message.length() <= idx) {
-                        sendMessage(Protocol.S2C_INVALID_MOVE + ":잘못된 블록 데이터입니다.");
-                        return;
-                    }
-                    handlePlaceBlock(message.substring(idx));
+                    handlePlaceBlock(data);
                     break;
 
                 case Protocol.C2S_RESIGN_COLOR:
@@ -136,67 +131,70 @@ public class ClientHandler extends Thread {
                     break;
 
                 case Protocol.C2S_WHISPER:
-                    String body = message.substring(Protocol.C2S_WHISPER.length() + 1);
-                    String[] whisperParts = body.split(":", 2);
-                    if (whisperParts.length == 2) {
-                        server.sendWhisper(this, whisperParts[0], whisperParts[1]);
+                    // Data format: "TargetUser:Message"
+                    if (data != null && data.contains(":")) {
+                        String[] parts = data.split(":", 2);
+                        server.sendWhisper(this, parts[0], parts[1]);
                     } else {
-                        sendMessage(Protocol.S2C_SYSTEM_MSG + ":귓속말 형식이 올바르지 않습니다.");
+                        sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "귓속말 형식이 올바르지 않습니다."));
                     }
                     break;
 
                 default:
-                    System.err.println("알 수 없는 명령어: " + message);
+                    System.err.println("처리되지 않은 프로토콜 코드: " + code);
             }
         } catch (Exception e) {
-            System.err.println("메시지 처리 중 예외 발생 (" + message + "): " + e.getMessage());
+            System.err.println("메시지 처리 중 예외 발생 (" + msg + "): " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    private void handleLegacyLogin(String usernameRaw) {
+    private void handleLogin(String usernameRaw) {
         if (usernameRaw == null || usernameRaw.trim().isEmpty()) {
-            sendMessage(Protocol.S2C_LOGIN_FAIL + ":유효하지 않은 이름입니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_LOGIN_FAIL, "유효하지 않은 이름입니다."));
             cleanup();
             return;
         }
         if (server.isUsernameTakenAnywhere(usernameRaw)) {
-            sendMessage(Protocol.S2C_LOGIN_FAIL + ":이미 사용중인 이름입니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_LOGIN_FAIL, "이미 사용중인 이름입니다."));
             cleanup();
             return;
         }
 
         this.username = usernameRaw;
         this.authenticated = true;
-        sendMessage(Protocol.S2C_LOGIN_SUCCESS);
+        sendMessage(new BlokusMsg(Protocol.S2C_LOGIN_SUCCESS));
         server.addClientToLobby(this);
     }
 
     private void handleCreateRoom(String roomName, String modeStr) {
         if (currentRoom != null) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 방에 입장해 있습니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "이미 방에 입장해 있습니다."));
             return;
         }
         if (server.isRoomNameTaken(roomName)) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 존재하는 방 이름입니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "이미 존재하는 방 이름입니다."));
             return;
         }
 
         GameRoom.GameMode gameMode;
         try {
             gameMode = GameRoom.GameMode.valueOf(modeStr.toUpperCase());
-        } catch (IllegalArgumentException e) {
+        } catch (Exception e) {
             gameMode = GameRoom.GameMode.CLASSIC;
         }
 
         GameRoom newRoom = server.createRoom(roomName, this, gameMode);
         this.currentRoom = newRoom;
-        sendMessage(Protocol.S2C_JOIN_SUCCESS + ":" + newRoom.getRoomId() + ":" + newRoom.getRoomName());
+
+        // 데이터 포맷: "RoomID:RoomName"
+        String joinData = newRoom.getRoomId() + ":" + newRoom.getRoomName();
+        sendMessage(new BlokusMsg(Protocol.S2C_JOIN_SUCCESS, joinData));
     }
 
     private void handleJoinRoom(String roomIdStr) {
         if (currentRoom != null) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":이미 방에 입장해 있습니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "이미 방에 입장해 있습니다."));
             return;
         }
         try {
@@ -204,24 +202,25 @@ public class ClientHandler extends Thread {
             GameRoom room = server.joinRoom(roomId, this);
             if (room != null) {
                 this.currentRoom = room;
-                sendMessage(Protocol.S2C_JOIN_SUCCESS + ":" + room.getRoomId() + ":" + room.getRoomName());
+                String joinData = room.getRoomId() + ":" + room.getRoomName();
+                sendMessage(new BlokusMsg(Protocol.S2C_JOIN_SUCCESS, joinData));
             } else {
-                sendMessage(Protocol.S2C_JOIN_FAIL + ":방이 꽉 찼거나 게임 중입니다.");
+                sendMessage(new BlokusMsg(Protocol.S2C_JOIN_FAIL, "방이 꽉 찼거나 게임 중입니다."));
             }
         } catch (NumberFormatException e) {
-            sendMessage(Protocol.S2C_JOIN_FAIL + ":잘못된 방 ID입니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_JOIN_FAIL, "잘못된 방 ID입니다."));
         }
     }
 
     private void handleLeaveRoom() {
         if (currentRoom == null) {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":입장한 방이 없습니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "입장한 방이 없습니다."));
             return;
         }
 
         server.leaveRoom(currentRoom, this);
         this.currentRoom = null;
-        sendMessage(Protocol.S2C_SYSTEM_MSG + ":방에서 나왔습니다. 로비로 이동합니다.");
+        sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "방에서 나왔습니다. 로비로 이동합니다."));
     }
 
     private void handleStartGame() {
@@ -236,7 +235,7 @@ public class ClientHandler extends Thread {
 
     private void handlePlaceBlock(String data) {
         if (currentRoom == null || !currentRoom.isGameStarted()) {
-            sendMessage(Protocol.S2C_INVALID_MOVE + ":게임 중이 아닙니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_INVALID_MOVE, "게임 중이 아닙니다."));
             return;
         }
         currentRoom.handlePlaceBlock(this, data);
@@ -244,19 +243,27 @@ public class ClientHandler extends Thread {
 
     private void handleChat(String message) {
         if (currentRoom != null) {
-            currentRoom.broadcastMessage(Protocol.S2C_CHAT + ":" + this.username + ":" + message);
+            // 채팅 보낼 때: 코드, 보낸사람(username), 내용(data)
+            // 서버가 broadcast 할 때는 BlokusMsg 생성자에 username을 명시해서 보냄
+            currentRoom.broadcastMessage(new BlokusMsg(Protocol.S2C_CHAT, this.username, message));
         } else {
-            sendMessage(Protocol.S2C_SYSTEM_MSG + ":방에 입장해야 채팅할 수 있습니다.");
+            sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "방에 입장해야 채팅할 수 있습니다."));
         }
     }
 
-    public void sendMessage(String message) {
+    /**
+     * 클라이언트에게 메시지 전송 (BlokusMsg 객체)
+     */
+    public void sendMessage(BlokusMsg msg) {
         if (out == null) return;
 
         try {
-            out.writeObject(message);
+            out.writeObject(msg);
             out.flush();
-            System.out.println("Server (S2C to " + (username != null ? username : "???") + "): " + message);
+            out.reset(); // 동일 객체 재전송 시 참조 문제 방지
+
+            // 로그 출력
+            System.out.println("Server (to " + (username != null ? username : "???") + "): " + msg);
         } catch (IOException e) {
             System.err.println("S2C Send Error to " + username + ": " + e.getMessage());
             cleanup();

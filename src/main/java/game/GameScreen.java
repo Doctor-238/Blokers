@@ -117,7 +117,6 @@ public class GameScreen extends JPanel {
             e.printStackTrace();
         }
 
-        //외부참조 EnableInputMethods
         this.enableInputMethods(false);
 
         setLayout(new BorderLayout(10, 10));
@@ -133,7 +132,6 @@ public class GameScreen extends JPanel {
         statusPanel.setPreferredSize(new Dimension(250, 60));
         topPanel.add(statusPanel, BorderLayout.WEST);
 
-        //외부참조 GridBagLayout
         JPanel centerPanel = new JPanel(new GridBagLayout());
         centerLabel = new JLabel("00:00");
         centerLabel.setFont(new Font("맑은 고딕", Font.BOLD, 36));
@@ -144,7 +142,6 @@ public class GameScreen extends JPanel {
         controlPanel.addMouseListener(backgroundClickListener);
 
         rotateButton = createStyledButton("회전 (r)");
-        //외부참조 람다 표현식(e ->())
         rotateButton.addActionListener(e -> rotateSelectedPiece());
 
         flipButton = createStyledButton("뒤집기 (f)");
@@ -184,7 +181,6 @@ public class GameScreen extends JPanel {
 
         toggleColorButton = createStyledButton("블록 전환 (e)");
         toggleColorButton.setVisible(false);
-        //외부참조 람다 표현식(e ->())
         toggleColorButton.addActionListener(e -> toggleInventoryColor());
         southWestButtons.add(toggleColorButton);
 
@@ -201,7 +197,6 @@ public class GameScreen extends JPanel {
 
         southPanel.add(southTopPanel, BorderLayout.NORTH);
 
-        //외부참조 WrapLayout
         handPanel = new JPanel(new WrapLayout(WrapLayout.LEFT, 5, 5));
         handPanel.setBackground(Color.WHITE);
         handPanel.addMouseListener(backgroundClickListener);
@@ -246,12 +241,10 @@ public class GameScreen extends JPanel {
     }
 
     private void setupChatPanel() {
-        //외부참조 JLayeredPane
         chatPanel = new JLayeredPane();
         chatPanel.setPreferredSize(new Dimension(CHAT_EXPANDED_WIDTH, 0));
 
         chatContentPanel = new JPanel(new BorderLayout());
-        //외부참조 JTabbedPane
         chatTabs = new JTabbedPane();
 
         chatAreaPane = new JTextPane();
@@ -303,7 +296,6 @@ public class GameScreen extends JPanel {
 
         JPanel chatInputPanel = new JPanel(new BorderLayout());
         chatField = new JTextField();
-        //외부참조 람다 표현식(e ->())
         chatField.addActionListener(e -> sendChat());
 
         JButton sendButton = createStyledButton("전송");
@@ -351,7 +343,6 @@ public class GameScreen extends JPanel {
             super.paintComponent(g);
 
             Graphics2D g2d = (Graphics2D) g;
-            //외부참조 KEY_ANTIALIASING
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             if (playerNames == null || playerNames.length == 0) return;
@@ -445,7 +436,6 @@ public class GameScreen extends JPanel {
     }
 
     private void setupKeyBindings() {
-        //외부참조 Key Bindings
         InputMap im = this.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         ActionMap am = this.getActionMap();
 
@@ -526,7 +516,6 @@ public class GameScreen extends JPanel {
         im.put(KeyStroke.getKeyStroke('D'), "navigateRight");
         im.put(KeyStroke.getKeyStroke('ㅇ'), "navigateRight");
 
-        //외부참조 Key Bindings
         am.put("navigateUp", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("up"); }});
         am.put("navigateLeft", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("left"); }});
         am.put("navigateDown", new AbstractAction() { @Override public void actionPerformed(ActionEvent e) { handleNavigate("down"); }});
@@ -624,7 +613,6 @@ public class GameScreen extends JPanel {
         centerLabel.setForeground(Color.BLACK);
 
         totalGameTimer = new Timer();
-        //외부참조 TimerTask
         totalGameTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -633,7 +621,6 @@ public class GameScreen extends JPanel {
                     return;
                 }
                 totalSecondsElapsed++;
-                //외부참조 invokeLater
                 SwingUtilities.invokeLater(() -> centerLabel.setText(formatTime(totalSecondsElapsed)));
             }
         }, 1000, 1000);
@@ -657,7 +644,7 @@ public class GameScreen extends JPanel {
 
     private void handleResign() {
         if (amISpectating) {
-            client.sendMessage(Protocol.C2S_LEAVE_ROOM);
+            client.sendMessage(new BlokusMsg(Protocol.C2S_LEAVE_ROOM));
             return;
         }
 
@@ -668,11 +655,11 @@ public class GameScreen extends JPanel {
 
         if (result == JOptionPane.YES_OPTION) {
             if (isPeerlessMode) {
-                client.sendMessage(Protocol.C2S_RESIGN_PEERLESS);
+                client.sendMessage(new BlokusMsg(Protocol.C2S_RESIGN_PEERLESS));
                 setSpectateMode(true);
             } else {
                 int colorToResign = currentTurnColor;
-                client.sendMessage(Protocol.C2S_RESIGN_COLOR + ":" + colorToResign);
+                client.sendMessage(new BlokusMsg(Protocol.C2S_RESIGN_COLOR, String.valueOf(colorToResign)));
 
                 myActiveColors.remove(colorToResign);
                 if (myActiveColors.isEmpty() && !amISpectating) {
@@ -977,8 +964,7 @@ public class GameScreen extends JPanel {
 
         if (isPeerlessMode) {
             if (isGhostValid) {
-                String message = String.format("%s:%s:%d:%d:%d:%d:%d",
-                        Protocol.C2S_PLACE_BLOCK,
+                String payload = String.format("%s:%d:%d:%d:%d:%d",
                         selectedPiece.getId(),
                         mouseGridPos.x,
                         mouseGridPos.y,
@@ -986,7 +972,7 @@ public class GameScreen extends JPanel {
                         flippedInt,
                         selectedPiece.getColor()
                 );
-                client.sendMessage(message);
+                client.sendMessage(new BlokusMsg(Protocol.C2S_PLACE_BLOCK, payload));
             }
         } else {
             if (!isMyTurn()) {
@@ -995,15 +981,14 @@ public class GameScreen extends JPanel {
             }
 
             if (isGhostValid) {
-                String message = String.format("%s:%s:%d:%d:%d:%d",
-                        Protocol.C2S_PLACE_BLOCK,
+                String payload = String.format("%s:%d:%d:%d:%d",
                         selectedPiece.getId(),
                         mouseGridPos.x,
                         mouseGridPos.y,
                         currentRotation,
                         flippedInt
                 );
-                client.sendMessage(message);
+                client.sendMessage(new BlokusMsg(Protocol.C2S_PLACE_BLOCK, payload));
             }
         }
     }
@@ -1147,7 +1132,7 @@ public class GameScreen extends JPanel {
 
             if (command.equals("/r")) {
                 if (parts.length == 3 && !parts[1].trim().isEmpty() && !parts[2].trim().isEmpty()) {
-                    client.sendMessage(Protocol.C2S_WHISPER + ":" + parts[1] + ":" + parts[2]);
+                    client.sendMessage(new BlokusMsg(Protocol.C2S_WHISPER, parts[1] + ":" + parts[2]));
                 } else if (parts.length < 2) {
                     appendChatMessage("[시스템]: 귓속말 사용법: /r [닉네임] [메세지]");
                 } else if (parts.length == 2) {
@@ -1159,7 +1144,7 @@ public class GameScreen extends JPanel {
                 appendChatMessage("[시스템]: 알 수 없는 명령어입니다. (사용 가능: /r)");
             }
         } else {
-            client.sendMessage(Protocol.C2S_CHAT + ":" + message);
+            client.sendMessage(new BlokusMsg(Protocol.C2S_CHAT, message));
         }
         chatField.setText("");
     }
@@ -1184,10 +1169,6 @@ public class GameScreen extends JPanel {
         }
     }
 
-    public void appendChatMessage(String data) {
-        appendChatMessage(data, false);
-    }
-
     public void appendChatMessage(String data, boolean isWhisper) {
         String message = data.replaceFirst(":", ": ");
 
@@ -1198,7 +1179,8 @@ public class GameScreen extends JPanel {
                 chatAreaPane.setCaretPosition(chatAreaPane.getDocument().getLength());
                 chatTabs.setSelectedComponent(chatAreaPane.getParent().getParent());
 
-            } else if (data.startsWith("[시스템]:") || data.startsWith(Protocol.S2C_SYSTEM_MSG)) {
+                // [수정] int형 Protocol.S2C_SYSTEM_MSG 체크 제거, String 체크만 남김
+            } else if (data.startsWith("[시스템]:")) {
                 StyledDocument doc = systemArea.getStyledDocument();
 
                 if (message.contains("턴 변경 → ")) {
@@ -1243,6 +1225,10 @@ public class GameScreen extends JPanel {
             }
         } catch (Exception e) {
         }
+    }
+
+    public void appendChatMessage(String data) {
+        appendChatMessage(data, false);
     }
 
     public void clearChat() {

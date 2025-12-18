@@ -3,8 +3,6 @@ package game;
 import javax.swing.*;
 import javax.swing.text.DefaultCaret;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -29,11 +27,11 @@ public class BlokusServer extends JFrame {
     private final Vector<ClientHandler> lobbyClients = new Vector<>();
     private int roomIdCounter = 0;
 
-    //외부참조 Properties
+    // 외부참조 Properties
     private final Properties scoreProps = new Properties();
     private static final String SCORES_FILE = "blokus_scores.properties";
 
-    //변경사항 로그 필터링 기능 추가
+    // 변경사항 로그 필터링 기능 추가
     private CardLayout cardLayout;
     private JPanel mainContainer;
     private JPanel topBar;
@@ -46,6 +44,7 @@ public class BlokusServer extends JFrame {
     private JPanel logFilterPanel;
     private JPanel userCheckBoxContainer;
 
+    // hiddenProtocols에는 이제 int code를 String으로 변환한 값(예: "32")이 저장됩니다.
     private final Set<String> hiddenTargets = ConcurrentHashMap.newKeySet();
     private final Set<String> hiddenProtocols = ConcurrentHashMap.newKeySet();
     private final Map<String, JCheckBox> userCheckBoxMap = new ConcurrentHashMap<>();
@@ -60,7 +59,6 @@ public class BlokusServer extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        //변경사항 로그 필터링 기능 추가
         topBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         btnTargetFilter = new JButton("타겟 필터링 설정");
         btnLogFilter = new JButton("로그 필터링 설정");
@@ -106,7 +104,6 @@ public class BlokusServer extends JFrame {
         setVisible(true);
     }
 
-    //변경사항 로그 필터링 기능 추가
     private void showScreen(String cardName) {
         cardLayout.show(mainContainer, cardName);
         if ("LOGS".equals(cardName)) {
@@ -142,7 +139,7 @@ public class BlokusServer extends JFrame {
         targetFilterPanel.add(userCheckBoxContainer, BorderLayout.CENTER);
     }
 
-    //변경사항 로그 필터링 기능 추가
+    // [Refactoring] int형 Protocol 상수를 읽도록 수정
     private void createLogFilterView() {
         logFilterPanel = new JPanel(new BorderLayout());
         JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -163,7 +160,8 @@ public class BlokusServer extends JFrame {
 
         Field[] fields = Protocol.class.getDeclaredFields();
         for (Field field : fields) {
-            if (Modifier.isStatic(field.getModifiers()) && Modifier.isFinal(field.getModifiers()) && field.getType() == String.class) {
+            // int형 상수인지 확인
+            if (Modifier.isStatic(field.getModifiers()) && Modifier.isFinal(field.getModifiers()) && field.getType() == int.class) {
                 String name = field.getName();
 
                 if (name.contains("LOGIN") || name.contains("LEADERBOARD") || name.contains("ROOM_LIST")) {
@@ -202,13 +200,16 @@ public class BlokusServer extends JFrame {
 
             for (Field field : fieldList) {
                 try {
-                    String protocolName = (String) field.get(null);
+                    // int 값 읽기
+                    int protocolCode = field.getInt(null);
+                    String codeStr = String.valueOf(protocolCode); // 필터링용 문자열 키
+
                     JCheckBox chk = new JCheckBox(field.getName(), true);
-                    chk.setToolTipText(protocolName);
+                    chk.setToolTipText("Code: " + protocolCode + " (0x" + Integer.toHexString(protocolCode).toUpperCase() + ")");
 
                     chk.addActionListener(e -> {
-                        if (chk.isSelected()) hiddenProtocols.remove(protocolName);
-                        else hiddenProtocols.add(protocolName);
+                        if (chk.isSelected()) hiddenProtocols.remove(codeStr);
+                        else hiddenProtocols.add(codeStr);
                     });
 
                     if (field.getName().startsWith("C2S")) {
@@ -293,17 +294,14 @@ public class BlokusServer extends JFrame {
         };
 
         PrintStream printStream = new PrintStream(out, true);
-        //외부참조 System.setOut
         System.setOut(printStream);
         System.setErr(printStream);
     }
 
     private void updateTextArea(final String text) {
-        //외부참조 invokeLater
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
-                //변경사항 로그 필터링 기능 추가
                 if (shouldFilter(text)) {
                     return;
                 }
@@ -312,6 +310,7 @@ public class BlokusServer extends JFrame {
         });
     }
 
+    // [Refactoring] BlokusMsg.toString() 형식에 맞춰 필터 로직 수정
     private boolean shouldFilter(String text) {
         if (text == null || text.trim().isEmpty()) return false;
 
@@ -324,13 +323,16 @@ public class BlokusServer extends JFrame {
         }
 
         for (String hiddenUser : hiddenTargets) {
-            if (text.startsWith(hiddenUser + " ") || text.contains("to " + hiddenUser + ")") || text.contains("from " + hiddenUser + "]")) {
+            // BlokusMsg.toString()에는 user=xxx 가 포함될 수 있음
+            if (text.startsWith(hiddenUser + " ") || text.contains("user=" + hiddenUser) || text.contains("from " + hiddenUser)) {
                 return true;
             }
         }
 
-        for (String hiddenProto : hiddenProtocols) {
-            if (text.contains(":" + hiddenProto) || text.contains(" " + hiddenProto)) {
+        // BlokusMsg.toString()은 "Msg{code=123, ...}" 형태임
+        for (String hiddenProtoCode : hiddenProtocols) {
+            // "code=123," 형태로 포함되어 있는지 확인
+            if (text.contains("code=" + hiddenProtoCode + ",") || text.contains("code=" + hiddenProtoCode + " ")) {
                 return true;
             }
         }
@@ -403,10 +405,12 @@ public class BlokusServer extends JFrame {
         saveScores();
     }
 
+    // [Refactoring] BlokusMsg 전송으로 변경
     public void sendLeaderboard(ClientHandler client) {
         synchronized (this) {
             if (scoreProps.isEmpty()) {
-                client.sendMessage(Protocol.S2C_LEADERBOARD_DATA);
+                // 데이터가 없을 때는 data 필드를 null로 보냄
+                client.sendMessage(new BlokusMsg(Protocol.S2C_LEADERBOARD_DATA));
                 return;
             }
         }
@@ -422,12 +426,16 @@ public class BlokusServer extends JFrame {
         }
         sorted.sort(Map.Entry.<String, Double>comparingByValue().reversed());
 
-        StringBuilder leaderboardData = new StringBuilder(Protocol.S2C_LEADERBOARD_DATA + ":");
+        StringBuilder leaderboardData = new StringBuilder();
         for (Map.Entry<String, Double> e : sorted) {
             leaderboardData.append(e.getKey()).append("/").append(e.getValue()).append(";");
         }
-        leaderboardData.deleteCharAt(leaderboardData.length() - 1);
-        client.sendMessage(leaderboardData.toString());
+        if (leaderboardData.length() > 0) {
+            leaderboardData.deleteCharAt(leaderboardData.length() - 1);
+        }
+
+        // Protocol + Data 객체 전송
+        client.sendMessage(new BlokusMsg(Protocol.S2C_LEADERBOARD_DATA, leaderboardData.toString()));
     }
 
     public synchronized boolean isUsernameTakenAnywhere(String username) {
@@ -507,24 +515,26 @@ public class BlokusServer extends JFrame {
         }
     }
 
+    // [Refactoring] BlokusMsg 전송으로 변경
     public synchronized void sendRoomList(ClientHandler client) {
-        StringBuilder roomListStr = new StringBuilder(Protocol.S2C_ROOM_LIST);
+        StringBuilder roomListStr = new StringBuilder();
         boolean hasData = false;
 
         for (GameRoom room : gameRooms) {
             if (!room.isGameStarted()) {
-                if (!hasData) {
-                    roomListStr.append(":");
-                    hasData = true;
+                if (hasData) {
+                    roomListStr.append(";");
                 }
-                roomListStr.append(String.format("[%d,%s,%d/4,%s];",
+                roomListStr.append(String.format("[%d,%s,%d/4,%s]",
                         room.getRoomId(), room.getRoomName(), room.getPlayerCount(), room.getGameMode().name()));
+                hasData = true;
             }
         }
-        if (hasData) roomListStr.deleteCharAt(roomListStr.length() - 1);
-        client.sendMessage(roomListStr.toString());
+        // Protocol은 헤더가 아닌 생성자에 포함
+        client.sendMessage(new BlokusMsg(Protocol.S2C_ROOM_LIST, roomListStr.toString()));
     }
 
+    // [Refactoring] BlokusMsg 전송으로 변경 (username 필드 활용)
     public synchronized void sendWhisper(ClientHandler from, String targetUsername, String message) {
         ClientHandler target = null;
 
@@ -549,13 +559,15 @@ public class BlokusServer extends JFrame {
         }
 
         if (target != null) {
-            String whisperMsg = String.format("[귓속말 from %s]:%s", from.getUsername(), message);
-            target.sendMessage(Protocol.S2C_WHISPER + ":" + whisperMsg);
+            // 받는 사람에게: Code=WHISPER, User=보낸사람, Data=메시지
+            target.sendMessage(new BlokusMsg(Protocol.S2C_WHISPER, from.getUsername(), message));
 
-            String echoMsg = String.format("[귓속말 to %s]:%s", target.getUsername(), message);
-            from.sendMessage(Protocol.S2C_WHISPER + ":" + echoMsg);
+            // 보낸 사람에게(확인용): Code=WHISPER, User=받는사람(또는 나), Data=메시지 (Client에서 처리하기 나름)
+            // 여기서는 'to User'라는 걸 표시하기 위해 Data에 포맷팅해서 보내거나,
+            // 클라이언트 처리에 맞춰서 User 필드에 targetUsername을 넣어서 보내면 됨.
+            from.sendMessage(new BlokusMsg(Protocol.S2C_WHISPER, targetUsername, "To: " + message));
         } else {
-            from.sendMessage(Protocol.S2C_SYSTEM_MSG + ":[" + targetUsername + "] 님을 찾을 수 없습니다.");
+            from.sendMessage(new BlokusMsg(Protocol.S2C_SYSTEM_MSG, "[" + targetUsername + "] 님을 찾을 수 없습니다."));
         }
     }
 
