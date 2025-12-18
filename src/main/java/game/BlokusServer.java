@@ -3,14 +3,22 @@ package game;
 import javax.swing.*;
 import javax.swing.text.DefaultCaret;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.*;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.Vector;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BlokusServer extends JFrame {
     private static final int PORT = 12345;
@@ -25,29 +33,245 @@ public class BlokusServer extends JFrame {
     private final Properties scoreProps = new Properties();
     private static final String SCORES_FILE = "blokus_scores.properties";
 
+    //변경사항 로그 필터링 기능 추가
+    private CardLayout cardLayout;
+    private JPanel mainContainer;
+    private JPanel topBar;
+    private JButton btnTargetFilter;
+    private JButton btnLogFilter;
+    private JButton btnClearLog;
+    private JButton btnBack;
+
+    private JPanel targetFilterPanel;
+    private JPanel logFilterPanel;
+    private JPanel userCheckBoxContainer;
+
+    private final Set<String> hiddenTargets = ConcurrentHashMap.newKeySet();
+    private final Set<String> hiddenProtocols = ConcurrentHashMap.newKeySet();
+    private final Map<String, JCheckBox> userCheckBoxMap = new ConcurrentHashMap<>();
+
     public BlokusServer() {
         super("Blokus Server Log");
         initGUI();
     }
 
     private void initGUI() {
-        setSize(500, 400);
+        setSize(800, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
+
+        //변경사항 로그 필터링 기능 추가
+        topBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        btnTargetFilter = new JButton("타겟 필터링 설정");
+        btnLogFilter = new JButton("로그 필터링 설정");
+        btnClearLog = new JButton("로그 지우기");
+        btnBack = new JButton("뒤로가기");
+        btnBack.setVisible(false);
+
+        topBar.add(btnTargetFilter);
+        topBar.add(btnLogFilter);
+        topBar.add(btnClearLog);
+        topBar.add(btnBack);
+        add(topBar, BorderLayout.NORTH);
+
+        cardLayout = new CardLayout();
+        mainContainer = new JPanel(cardLayout);
 
         logArea = new JTextArea();
         logArea.setEditable(false);
         logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
-
         DefaultCaret caret = (DefaultCaret) logArea.getCaret();
         caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
-
         JScrollPane scrollPane = new JScrollPane(logArea);
-        add(scrollPane, BorderLayout.CENTER);
+
+        createTargetFilterView();
+        createLogFilterView();
+
+        mainContainer.add(scrollPane, "LOGS");
+        mainContainer.add(new JScrollPane(targetFilterPanel), "TARGETS");
+
+        JScrollPane logFilterScroll = new JScrollPane(logFilterPanel);
+        logFilterScroll.getVerticalScrollBar().setUnitIncrement(16);
+        mainContainer.add(logFilterScroll, "PROTOCOLS");
+
+        add(mainContainer, BorderLayout.CENTER);
+
+        btnTargetFilter.addActionListener(e -> showScreen("TARGETS"));
+        btnLogFilter.addActionListener(e -> showScreen("PROTOCOLS"));
+        btnClearLog.addActionListener(e -> logArea.setText(""));
+        btnBack.addActionListener(e -> showScreen("LOGS"));
 
         redirectSystemStreams();
 
         setVisible(true);
+    }
+
+    //변경사항 로그 필터링 기능 추가
+    private void showScreen(String cardName) {
+        cardLayout.show(mainContainer, cardName);
+        if ("LOGS".equals(cardName)) {
+            btnTargetFilter.setVisible(true);
+            btnLogFilter.setVisible(true);
+            btnClearLog.setVisible(true);
+            btnBack.setVisible(false);
+        } else {
+            btnTargetFilter.setVisible(false);
+            btnLogFilter.setVisible(false);
+            btnClearLog.setVisible(false);
+            btnBack.setVisible(true);
+        }
+    }
+
+    private void createTargetFilterView() {
+        targetFilterPanel = new JPanel(new BorderLayout());
+        JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        header.add(new JLabel("<html><h2>타겟 필터링 설정</h2><p>체크 해제시 해당 대상의 로그가 보이지 않습니다.</p></html>"));
+        targetFilterPanel.add(header, BorderLayout.NORTH);
+
+        userCheckBoxContainer = new JPanel();
+        userCheckBoxContainer.setLayout(new BoxLayout(userCheckBoxContainer, BoxLayout.Y_AXIS));
+
+        JCheckBox serverCheck = new JCheckBox("Server / System", true);
+        serverCheck.addActionListener(e -> {
+            if (serverCheck.isSelected()) hiddenTargets.remove("SERVER");
+            else hiddenTargets.add("SERVER");
+        });
+        userCheckBoxContainer.add(serverCheck);
+        userCheckBoxContainer.add(new JSeparator());
+
+        targetFilterPanel.add(userCheckBoxContainer, BorderLayout.CENTER);
+    }
+
+    //변경사항 로그 필터링 기능 추가
+    private void createLogFilterView() {
+        logFilterPanel = new JPanel(new BorderLayout());
+        JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        header.add(new JLabel("<html><h2>로그 필터링 설정</h2><p>체크 해제시 해당 프로토콜 로그가 보이지 않습니다.</p></html>"));
+        logFilterPanel.add(header, BorderLayout.NORTH);
+
+        JPanel contentPanel = new JPanel();
+        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+
+        Map<String, List<Field>> categoryMap = new LinkedHashMap<>();
+        categoryMap.put("로그인 및 로비 (Login & Lobby)", new ArrayList<>());
+        categoryMap.put("방 관리 (Room Management)", new ArrayList<>());
+        categoryMap.put("게임 진행 (Game Play)", new ArrayList<>());
+        categoryMap.put("게임 액션 (In-Game Action)", new ArrayList<>());
+        categoryMap.put("채팅 및 시스템 (Chat & System)", new ArrayList<>());
+        categoryMap.put("피어리스 모드 (Peerless Mode)", new ArrayList<>());
+        categoryMap.put("기타 (Others)", new ArrayList<>());
+
+        Field[] fields = Protocol.class.getDeclaredFields();
+        for (Field field : fields) {
+            if (Modifier.isStatic(field.getModifiers()) && Modifier.isFinal(field.getModifiers()) && field.getType() == String.class) {
+                String name = field.getName();
+
+                if (name.contains("LOGIN") || name.contains("LEADERBOARD") || name.contains("ROOM_LIST")) {
+                    categoryMap.get("로그인 및 로비 (Login & Lobby)").add(field);
+                } else if (name.contains("CREATE_ROOM") || name.contains("JOIN") || name.contains("LEAVE") || name.contains("KICK") || name.contains("ROOM_UPDATE")) {
+                    categoryMap.get("방 관리 (Room Management)").add(field);
+                } else if (name.contains("PEERLESS")) {
+                    categoryMap.get("피어리스 모드 (Peerless Mode)").add(field);
+                } else if (name.contains("CHAT") || name.contains("WHISPER") || name.contains("SYSTEM")) {
+                    categoryMap.get("채팅 및 시스템 (Chat & System)").add(field);
+                } else if (name.contains("PLACE") || name.contains("VALID") || name.contains("PASS")) {
+                    categoryMap.get("게임 액션 (In-Game Action)").add(field);
+                } else if (name.contains("GAME") || name.contains("HAND") || name.contains("TIME") || name.contains("RESIGN")) {
+                    categoryMap.get("게임 진행 (Game Play)").add(field);
+                } else {
+                    categoryMap.get("기타 (Others)").add(field);
+                }
+            }
+        }
+
+        for (Map.Entry<String, List<Field>> entry : categoryMap.entrySet()) {
+            String categoryName = entry.getKey();
+            List<Field> fieldList = entry.getValue();
+            if (fieldList.isEmpty()) continue;
+
+            JPanel groupPanel = new JPanel(new BorderLayout());
+            groupPanel.setBorder(BorderFactory.createTitledBorder(categoryName));
+
+            JPanel splitPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+
+            JPanel leftPanel = new JPanel();
+            leftPanel.setLayout(new BoxLayout(leftPanel, BoxLayout.Y_AXIS));
+
+            JPanel rightPanel = new JPanel();
+            rightPanel.setLayout(new BoxLayout(rightPanel, BoxLayout.Y_AXIS));
+
+            for (Field field : fieldList) {
+                try {
+                    String protocolName = (String) field.get(null);
+                    JCheckBox chk = new JCheckBox(field.getName(), true);
+                    chk.setToolTipText(protocolName);
+
+                    chk.addActionListener(e -> {
+                        if (chk.isSelected()) hiddenProtocols.remove(protocolName);
+                        else hiddenProtocols.add(protocolName);
+                    });
+
+                    if (field.getName().startsWith("C2S")) {
+                        leftPanel.add(chk);
+                    } else {
+                        rightPanel.add(chk);
+                    }
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            JPanel leftWrapper = new JPanel(new BorderLayout());
+            leftWrapper.add(leftPanel, BorderLayout.NORTH);
+
+            JPanel rightWrapper = new JPanel(new BorderLayout());
+            rightWrapper.add(rightPanel, BorderLayout.NORTH);
+
+            splitPanel.add(leftWrapper);
+            splitPanel.add(rightWrapper);
+
+            groupPanel.add(splitPanel, BorderLayout.CENTER);
+
+            contentPanel.add(groupPanel);
+            contentPanel.add(Box.createVerticalStrut(10));
+        }
+
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.add(contentPanel, BorderLayout.NORTH);
+        logFilterPanel.add(wrapper, BorderLayout.CENTER);
+    }
+
+    private void updateUserCheckboxes() {
+        SwingUtilities.invokeLater(() -> {
+            int componentCount = userCheckBoxContainer.getComponentCount();
+            for (int i = componentCount - 1; i >= 2; i--) {
+                userCheckBoxContainer.remove(i);
+            }
+            userCheckBoxMap.clear();
+
+            Set<String> activeUsers = new HashSet<>();
+            for (ClientHandler c : lobbyClients) {
+                if (c.getUsername() != null) activeUsers.add(c.getUsername());
+            }
+            for (GameRoom room : gameRooms) {
+                for (ClientHandler c : room.getPlayers()) {
+                    if (c.getUsername() != null) activeUsers.add(c.getUsername());
+                }
+            }
+
+            for (String user : activeUsers) {
+                boolean isVisible = !hiddenTargets.contains(user);
+                JCheckBox chk = new JCheckBox(user, isVisible);
+                chk.addActionListener(e -> {
+                    if (chk.isSelected()) hiddenTargets.remove(user);
+                    else hiddenTargets.add(user);
+                });
+                userCheckBoxContainer.add(chk);
+                userCheckBoxMap.put(user, chk);
+            }
+            userCheckBoxContainer.revalidate();
+            userCheckBoxContainer.repaint();
+        });
     }
 
     private void redirectSystemStreams() {
@@ -79,9 +303,39 @@ public class BlokusServer extends JFrame {
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
+                //변경사항 로그 필터링 기능 추가
+                if (shouldFilter(text)) {
+                    return;
+                }
                 logArea.append(text);
             }
         });
+    }
+
+    private boolean shouldFilter(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+
+        if (hiddenTargets.contains("SERVER")) {
+            if (text.startsWith("블로커스 서버") || text.startsWith("새 클라이언트") || text.startsWith("서버 소켓") || text.contains("Server (S2C")
+                    || text.startsWith("CLASSIC") || text.startsWith("PEERLESS") || text.startsWith("방") || text.startsWith("게임 종료")
+                    || text.startsWith("스코어") || text.startsWith("???") || text.startsWith("Socket")) {
+                return true;
+            }
+        }
+
+        for (String hiddenUser : hiddenTargets) {
+            if (text.startsWith(hiddenUser + " ") || text.contains("to " + hiddenUser + ")") || text.contains("from " + hiddenUser + "]")) {
+                return true;
+            }
+        }
+
+        for (String hiddenProto : hiddenProtocols) {
+            if (text.contains(":" + hiddenProto) || text.contains(" " + hiddenProto)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static void main(String[] args) {
@@ -196,10 +450,12 @@ public class BlokusServer extends JFrame {
     public synchronized void addClientToLobby(ClientHandler client) {
         if (!lobbyClients.contains(client)) lobbyClients.add(client);
         sendLeaderboard(client);
+        updateUserCheckboxes();
     }
 
     public synchronized void removeClientFromLobby(ClientHandler client) {
         lobbyClients.remove(client);
+        updateUserCheckboxes();
     }
 
     public synchronized GameRoom createRoom(String roomName, ClientHandler host, GameRoom.GameMode gameMode) {
@@ -321,5 +577,6 @@ public class BlokusServer extends JFrame {
         }
         removeClientFromLobby(client);
         System.out.println(client.getUsername() + " 접속 종료.");
+        updateUserCheckboxes();
     }
 }
